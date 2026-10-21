@@ -25,7 +25,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §6.1, §5.1, §13 (Unidade)
 - **Depende de:** T00
 
-### [ ] T02 — Erros de domínio e taxonomia de `FailureCode`
+### [x] T02 — Erros de domínio e taxonomia de `FailureCode`
 - **Descrição:** Hierarquia de erros de domínio (`DomainError`, `CurrencyMismatchError`, `InvalidTransactionStateError`, …) e enum `FailureCode` estável e legível por máquina (ex.: `INSUFFICIENT_FUNDS`, `REVERSAL_INSUFFICIENT_FUNDS`, `CURRENCY_MISMATCH`, `REFERENCE_NOT_FOUND`, `REFERENCE_MISMATCH`, `INVALID_REFERENCE_KIND`, `REFERENCE_AMOUNT_MISMATCH`, `ALREADY_REVERSED`, `WALLET_NOT_FOUND`, `WALLET_PLAYER_MISMATCH`, …). Cada código é classificado em "reenviar", "corrigir payload" ou "desistir".
 - **Critério de aceite:** a falta de saldo em aposta e a falta de saldo em reversão têm códigos distintos. A tabela de códigos e a classificação estão documentadas no `ARCHITECTURE.md`.
 - **Seção:** §7.2, §7 regra 9

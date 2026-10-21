@@ -215,6 +215,6 @@ describe('Money: currency conflict', () => {
     }
     expect(caught).toBeInstanceOf(CurrencyMismatchError);
     expect(caught).toBeInstanceOf(DomainError);
-    expect((caught as CurrencyMismatchError).code).toBe('CURRENCY_MISMATCH');
+    expect<string>((caught as CurrencyMismatchError).code).toBe('CURRENCY_MISMATCH');
   });
 });

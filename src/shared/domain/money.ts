@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 
 import { DomainError } from './domain-error';
+import { FailureCode } from './failure-code';
 
 /** Precisão alta para que somas de valores grandes nunca arredondem (o padrão são 20 dígitos). */
 const MoneyDecimal = Decimal.clone({ precision: 64, rounding: Decimal.ROUND_HALF_EVEN });
@@ -15,7 +16,7 @@ export interface MoneyProps {
 }
 
 export class InvalidMoneyError extends DomainError {
-  readonly code = 'INVALID_MONEY';
+  readonly code = FailureCode.InvalidMoney;
 
   constructor(reason: string) {
     super(`Invalid money: ${reason}`);
@@ -23,7 +24,7 @@ export class InvalidMoneyError extends DomainError {
 }
 
 export class CurrencyMismatchError extends DomainError {
-  readonly code = 'CURRENCY_MISMATCH';
+  readonly code = FailureCode.CurrencyMismatch;
 
   constructor(
     readonly expected: string,

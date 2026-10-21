@@ -24,3 +24,6 @@ CLAUDE.md
 
 # planos/artefatos locais do gstack (make-task etc.)
 .gstack/
+
+# registro local de erros encontrados durante o desenvolvimento
+ERROS.md

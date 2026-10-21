@@ -1,0 +1,23 @@
+# dependências e build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ambiente
+.env
+.env.*
+!.env.example
+
+# logs e relatórios
+*.log
+coverage/
+reports/
+
+# editores / SO
+.idea/
+.vscode/
+.DS_Store
+
+# enunciado do desafio (fonte da verdade local, não versionado)
+DESAFIO.md
+CLAUDE.md

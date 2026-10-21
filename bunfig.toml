@@ -1,0 +1,6 @@
+[install]
+exact = true
+
+[test]
+# reflect-metadata precisa estar carregado antes de qualquer decorator do NestJS.
+preload = ["./test/setup.ts"]

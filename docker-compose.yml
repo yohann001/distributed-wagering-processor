@@ -1,0 +1,86 @@
+name: wagering
+
+x-app-env: &app-env
+  NODE_ENV: production
+  PORT: "3000"
+  LOG_LEVEL: info
+  DATABASE_URL: postgres://wagering:wagering@postgres:5432/wagering
+  DATABASE_POOL_MAX: "10"
+  AWS_REGION: us-east-1
+  AWS_ENDPOINT_URL: http://localstack:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  SQS_WAGER_QUEUE_URL: http://localstack:4566/000000000000/wager-transactions.fifo
+  SQS_WAGER_DLQ_URL: http://localstack:4566/000000000000/wager-transactions-dlq.fifo
+
+services:
+  postgres:
+    image: postgres:17.11
+    environment:
+      POSTGRES_USER: wagering
+      POSTGRES_PASSWORD: wagering
+      POSTGRES_DB: wagering
+    # Folga de conexões para 3+ réplicas x pool + testes de concorrência.
+    command: ["postgres", "-c", "max_connections=200"]
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wagering -d wagering"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  localstack:
+    # 4.14.0: última imagem community que roda sem LOCALSTACK_AUTH_TOKEN.
+    image: localstack/localstack:4.14.0
+    environment:
+      SERVICES: sqs
+      AWS_DEFAULT_REGION: us-east-1
+      SQS_ENDPOINT_STRATEGY: path
+      SQS_MAX_RECEIVE_COUNT: "5"
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+    volumes:
+      - ./docker/localstack/init-sqs.sh:/etc/localstack/init/ready.d/init-sqs.sh:ro
+    healthcheck:
+      # Saudável só depois que o init script terminou e as filas existem.
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name wager-transactions.fifo >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  # --- Aplicação: 3 réplicas atrás do nginx (profile `app`) ---
+  app:
+    profiles: ["app"]
+    build: .
+    environment:
+      <<: *app-env
+    deploy:
+      replicas: 3
+    stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nginx:
+    profiles: ["app"]
+    image: nginx:1.30.6
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

@@ -21,3 +21,6 @@ reports/
 # enunciado do desafio (fonte da verdade local, não versionado)
 DESAFIO.md
 CLAUDE.md
+
+# planos/artefatos locais do gstack (make-task etc.)
+.gstack/

@@ -19,7 +19,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 1 — Domínio puro (testes unitários, sem I/O)
 
-### [ ] T01 — Value object `Money`
+### [x] T01 — Value object `Money`
 - **Descrição:** `Money` imutável sobre `decimal.js`: `from`, `zero`, `add`, `subtract`, `negate`, `isZero/isPositive/isNegative/isLessThan/equals`, `toJSON`, `toString`. Escala fixa de 2 casas, moeda ISO-4217 validada. Parser de entrada que rejeita `NaN`, `Infinity`, notação científica, string vazia, mais de 2 casas e valores negativos em contratos de entrada. Operações entre moedas diferentes lançam erro de domínio.
 - **Critério de aceite:** testes unitários cobrem cada entrada inválida listada, escala/serialização (`"25.00"`, `"0.10"`, `"1000.00"`), imutabilidade (operações retornam nova instância), aritmética exata (`0.10 + 0.20 == 0.30`) e conflito de moeda. Nenhum `number` na API pública de `Money`.
 - **Seção:** §6.1, §5.1, §13 (Unidade)

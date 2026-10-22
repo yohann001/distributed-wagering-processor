@@ -31,7 +31,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §7.2, §7 regra 9
 - **Depende de:** T00
 
-### [ ] T03 — `WalletLedgerEntry` imutável
+### [x] T03 — `WalletLedgerEntry` imutável
 - **Descrição:** Entidade com todos os campos `readonly`, sem métodos de transição. `create` valida `balanceBefore ± money === balanceAfter`, a mesma moeda nos três valores e `money` positivo. `rehydrate` não revalida. `isBalanced()`.
 - **Critério de aceite:** testes unitários com lançamento desbalanceado (rejeitado), moedas misturadas (rejeitado), `DEBIT`/`CREDIT` corretos e `rehydrate` sem revalidação.
 - **Seção:** §6.4

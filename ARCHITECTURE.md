@@ -44,3 +44,13 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 ### Hierarquia de erros
 
 `DomainError` é abstrata e expõe `code: FailureCode` e `action: FailureAction`. As subclasses atuais são `InvalidMoneyError`, `CurrencyMismatchError` e `InvalidTransactionStateError`. Regras de negócio não lançam exceção para o controller: viram `REJECTED` com o código correspondente. O mapeamento para HTTP (T19) e para ack, retry e DLQ (T22) parte desta classificação.
+
+## Lançamento de ledger (§6.4)
+
+`WalletLedgerEntry` (`src/modules/wallet/domain/wallet-ledger-entry.ts`) é imutável por estrutura: todos os campos são `readonly`, a instância é congelada (`Object.freeze`) e não existe nenhum método de transição. Testes: `test/unit/modules/wallet/domain/wallet-ledger-entry.spec.ts`.
+
+- **`create` valida:** direção `DEBIT`/`CREDIT`; mesma moeda em `money`, `balanceBefore` e `balanceAfter`; `money` estritamente positivo (lançamento de valor zero seria uma operação sem efeito, e essas não geram lançamento); saldos antes e depois não negativos; `createdAt` válido; e `balanceBefore − money = balanceAfter` (débito) ou `balanceBefore + money = balanceAfter` (crédito).
+- **`rehydrate` não revalida.** `isBalanced()` nunca lança: moeda misturada ou direção desconhecida contam como desbalanceado, então ela pode ser usada para auditar dados lidos do banco.
+- **Erro `InvalidLedgerEntryError` com `INVARIANT_VIOLATION`, e não `CURRENCY_MISMATCH`.** Quem cria lançamentos é a `Wallet`, nunca o cliente. Um lançamento inválido é bug, não payload errado. A moeda errada vinda do cliente é barrada antes, pela `Wallet`, com `CurrencyMismatchError`.
+- **`createdAt` com cópia defensiva.** `Date` é mutável mesmo atrás de `readonly`, por isso a entidade guarda uma cópia e o getter também devolve uma cópia. É a única diferença em relação ao esqueleto do §6.4, que expõe `public readonly createdAt: Date`.
+- As mesmas regras serão repetidas no schema (T10: `CHECK` de aritmética e de sinal, trigger contra `UPDATE`/`DELETE`), conforme §5.9.

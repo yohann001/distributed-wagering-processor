@@ -199,6 +199,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ### [ ] T24 — Worker de `PENDING_REFERENCE`
 - **Descrição:** Worker agendado que reprocessa transações `PENDING_REFERENCE` com backoff exponencial (claim com `SKIP LOCKED`) e limite de tentativas/TTL definido e justificado. Quando a referência chega, aplica pela mesma política. Esgotado o limite, `REJECTED` com `REFERENCE_NOT_FOUND` (ou equivalente) e evento publicado.
+- **Decisão pendente (review T13–T18):** o replay (`SubmitWagerTransaction`) devolve a linha atual da transação. Quando este worker resolver um `PENDING_REFERENCE`, reenviar a submissão original passará a devolver `PROCESSED` com outro `balanceAfter`. Decidir se o replay devolve o estado atual ou o resultado original (§7 regra 7: "o resultado original, inclusive o saldo observado na época") e registrar no `ARCHITECTURE.md`.
 - **Critério de aceite:** testes de integração para `REFUND` antes da `BET` (vira `PROCESSED` depois que a `BET` chega), `ROLLBACK` cuja referência nunca chega (`REJECTED` + evento após o limite) e reprocessamento concorrente entre instâncias aplicando uma única vez.
 - **Seção:** §7.1, §7 regra 8
 - **Depende de:** T16

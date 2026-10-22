@@ -1,3 +1,4 @@
+import { DriverException } from '@mikro-orm/core';
 import type { EntityManager } from '@mikro-orm/postgresql';
 
 import type { Env } from '../../config/env';
@@ -56,6 +57,30 @@ export function classifyConcurrencyConflict(error: unknown): ConcurrencyConflict
   return reason === undefined ? null : new ConcurrencyConflictError(reason, `SQLSTATE ${code}`);
 }
 
+/**
+ * Erro do banco sem SQL, parâmetros nem `detail` (§12). A mensagem do `DriverException` traz o SQL com os
+ * valores interpolados e o `detail` do Postgres traz a linha inteira ("Failing row contains ..."), e a
+ * redaction do pino só enxerga nomes de campo. Sem `cause`: o serializer de erro do pino o incluiria.
+ */
+export class DatabaseError extends Error {
+  readonly code: string | undefined;
+  readonly constraint: string | undefined;
+  readonly table: string | undefined;
+
+  constructor(source: DriverException) {
+    const { code, constraint, table } = source as DriverException & { constraint?: string; table?: string };
+    super(
+      `Database error SQLSTATE ${code ?? 'unknown'}` +
+        (table === undefined ? '' : ` on ${table}`) +
+        (constraint === undefined ? '' : ` (constraint ${constraint})`),
+    );
+    this.name = 'DatabaseError';
+    this.code = code;
+    this.constraint = constraint;
+    this.table = table;
+  }
+}
+
 export class MikroOrmUnitOfWork extends UnitOfWork {
   constructor(
     private readonly em: EntityManager,
@@ -84,7 +109,8 @@ export class MikroOrmUnitOfWork extends UnitOfWork {
       } catch (error) {
         const conflict = classifyConcurrencyConflict(error);
         if (conflict === null) {
-          throw error;
+          // Erros de domínio (inclusive as violações de unique já traduzidas pelos repositórios) passam intactos.
+          throw error instanceof DriverException ? new DatabaseError(error) : error;
         }
         if (attempt >= this.options.maxAttempts) {
           this.metrics.recordConflict(conflict.reason, 'exhausted');

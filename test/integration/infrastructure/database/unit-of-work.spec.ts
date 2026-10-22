@@ -2,13 +2,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 
 import { MikroORM } from '@mikro-orm/postgresql';
 import type { INestApplication } from '@nestjs/common';
+import pino from 'pino';
 import { Registry } from 'prom-client';
 
+import { loadEnv } from '../../../../src/config/env';
 import { ConcurrencyMetrics } from '../../../../src/infrastructure/database/concurrency-metrics';
 import {
+  DatabaseError,
   MikroOrmUnitOfWork,
   type UnitOfWorkOptions,
 } from '../../../../src/infrastructure/database/mikro-orm-unit-of-work';
+import { buildLoggerOptions } from '../../../../src/infrastructure/observability/logger.config';
 import { WalletRepository } from '../../../../src/modules/wallet/application/wallet-repository';
 import {
   ConcurrencyConflictError,
@@ -17,6 +21,7 @@ import {
 } from '../../../../src/shared/application/unit-of-work';
 import { ExponentialBackoff } from '../../../../src/shared/domain/exponential-backoff';
 import { createTestApp } from '../../../support/create-test-app';
+import { createLogCapture } from '../../../support/log-capture';
 import { openWalletWithBalance } from '../../../support/fixtures';
 import { present } from '../../../support/orm-context';
 
@@ -171,6 +176,36 @@ describe('MikroOrmUnitOfWork (Postgres real)', () => {
     expect(error).toMatchObject({ code: '23505' });
     expect(calls).toBe(1);
     expect(await totalConflicts()).toBe(totalBefore);
+  });
+
+  it('strips SQL, bindings and row detail from a driver error so financial values never reach the log (§12)', async () => {
+    const capture = createLogCapture();
+    const logger = pino(buildLoggerOptions(loadEnv()), capture.stream);
+
+    const error = await fastUow()
+      .run(() =>
+        orm.em.execute(
+          `insert into wallets (id, player_id, currency, balance, version, created_at, updated_at)
+           values (?, 'leak-probe', 'BRL', ?, 1, now(), now())`,
+          [Bun.randomUUIDv7(), '-12345.67'],
+        ),
+      )
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(DatabaseError);
+    expect(error).toMatchObject({
+      code: '23514',
+      constraint: 'wallets_balance_non_negative',
+      table: 'wallets',
+    });
+    // O handler do Nest loga `message` e `stack` como texto; o pino serializa o objeto inteiro.
+    const { message, stack } = error as Error;
+    logger.error({ err: error }, 'unhandled');
+    for (const text of [message, stack ?? '', capture.raw()]) {
+      expect(text).not.toContain('12345.67');
+      expect(text).not.toContain('Failing row');
+      expect(text).not.toContain('insert into');
+    }
   });
 
   it('refuses a nested run', async () => {

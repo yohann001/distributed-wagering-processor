@@ -71,8 +71,8 @@ export class OutboxMessage {
    * na outbox evita enfileirar o mesmo evento duas vezes.
    */
   static enqueue(event: IntegrationEvent<unknown>): OutboxMessage {
-    // Cópia JSON do envelope (§11), exatamente o que vai para o jsonb e para a fila; também resolve
-    // o pitfall interface -> Record.
+    // Cópia JSON do envelope (§11), exatamente o que vai para a fila (num `jsonb` a ordem das chaves
+    // se perde; decisão do T10); também resolve o pitfall interface -> Record.
     const payload = frozenJsonCopy(event);
     return OutboxMessage.rehydrate({
       id: event.eventId,
@@ -142,8 +142,10 @@ export class OutboxMessage {
     this.assertPending('scheduleRetry');
     assertValidDate('now', now);
     const delay = backoff.delayMs(this._attempts + 1);
+    const next = new Date(now.getTime() + delay);
+    assertValidDate('nextAttemptAt', next);
     this._attempts += 1;
-    this._nextAttemptAt = new Date(now.getTime() + delay);
+    this._nextAttemptAt = next;
   }
 
   private assertPending(transition: string): void {

@@ -5,9 +5,9 @@ import type { Wallet } from '../../wallet/domain/wallet';
 import { LedgerDirection, type WalletLedgerEntry } from '../../wallet/domain/wallet-ledger-entry';
 import {
   InvalidWagerTransactionError,
+  WagerTransaction,
   WagerTransactionKind,
   WagerTransactionStatus,
-  type WagerTransaction,
 } from './wager-transaction';
 
 export enum WagerDecision {
@@ -122,6 +122,16 @@ export class WagerApplicationPolicy {
     if (tx.isTerminal()) {
       throw new InvalidTransactionStateError(tx.id, tx.status, 'apply');
     }
+    // Dado reidratado com status desconhecido ou kind interno (OPENING) não pode ser aplicado.
+    if (
+      tx.status !== WagerTransactionStatus.Pending &&
+      tx.status !== WagerTransactionStatus.PendingReference
+    ) {
+      throw new InvalidTransactionStateError(tx.id, tx.status, 'apply');
+    }
+    if (!WagerTransaction.isSubmittableKind(tx.kind)) {
+      throw new InvalidWagerTransactionError(`${tx.kind} cannot be applied by the provider policy`);
+    }
     // `create` já barra; aqui protege dado reidratado, que creditaria antes de markProcessed lançar.
     if (tx.requiresReference() && tx.referenceExternalTransactionId === undefined) {
       throw new InvalidWagerTransactionError(`${tx.kind} without reference cannot be applied`);
@@ -205,6 +215,7 @@ export class WagerApplicationPolicy {
     other: WagerTransaction,
   ): boolean {
     return (
+      other.referenceTransactionId === reference.id &&
       REVERSAL_KINDS.has(other.kind) &&
       other.status === WagerTransactionStatus.Processed &&
       other.id !== tx.id &&

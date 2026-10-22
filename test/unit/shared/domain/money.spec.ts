@@ -11,7 +11,7 @@ const brl = (amount: string): Money => Money.from({ amount, currency: 'BRL' });
 const usd = (amount: string): Money => Money.from({ amount, currency: 'USD' });
 
 describe('Money.from: valid inputs', () => {
-  it.each(['0.00', '0.10', '25.00', '1000.00', '12345678901234567890123.45'])(
+  it.each(['0.00', '0.10', '25.00', '1000.00', '9999999999999999.99'])(
     'round-trips %s through toJSON',
     (amount) => {
       expect(brl(amount).toJSON()).toEqual({ amount, currency: 'BRL' });
@@ -49,6 +49,10 @@ describe('Money.from: invalid amounts', () => {
     '25,00',
     '1_000.00',
     '0x1A',
+    // acima do teto de 16 dígitos inteiros (numeric(18,2))
+    '12345678901234567890123.45',
+    '10000000000000000.00',
+    `${'9'.repeat(70)}.00`,
   ])('rejects %p', (amount) => {
     expect(() => Money.from({ amount, currency: 'BRL' })).toThrow(InvalidMoneyError);
   });
@@ -125,8 +129,39 @@ describe('Money: arithmetic', () => {
   });
 
   it('keeps large values exact', () => {
-    const result = brl('12345678901234567890123.45').add(brl('0.01'));
-    expect(result.toJSON().amount).toBe('12345678901234567890123.46');
+    const result = brl('1234567890123456.78').add(brl('0.01'));
+    expect(result.toJSON().amount).toBe('1234567890123456.79');
+  });
+});
+
+describe('Money: 16-digit ceiling', () => {
+  it('accepts the largest value and round-trips it', () => {
+    expect(brl('9999999999999999.99').toJSON()).toEqual({
+      amount: '9999999999999999.99',
+      currency: 'BRL',
+    });
+  });
+
+  it('throws InvalidMoneyError when an addition goes over the ceiling', () => {
+    expect(() => brl('9999999999999999.99').add(brl('0.01'))).toThrow(InvalidMoneyError);
+  });
+
+  it('throws InvalidMoneyError when a subtraction goes under the negative ceiling', () => {
+    const lowest = brl('0.00').subtract(brl('9999999999999999.99'));
+    expect(lowest.toJSON().amount).toBe('-9999999999999999.99');
+    expect(() => lowest.subtract(brl('0.01'))).toThrow(InvalidMoneyError);
+  });
+
+  it('keeps the error message free of the amount digits', () => {
+    let caught: unknown;
+    try {
+      brl('9999999999999999.99').add(brl('0.01'));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(InvalidMoneyError);
+    expect((caught as InvalidMoneyError).message).not.toMatch(/\d{4,}/);
+    expect((caught as InvalidMoneyError).message).toContain('16 integer digits');
   });
 });
 

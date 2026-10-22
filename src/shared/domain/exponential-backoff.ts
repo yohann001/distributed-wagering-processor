@@ -10,6 +10,9 @@ export class InvalidBackoffError extends DomainError {
   }
 }
 
+/** Atraso maior que um dia não é backoff, é configuração errada. */
+export const MAX_BACKOFF_DELAY_MS = 86_400_000;
+
 export interface ExponentialBackoffOptions {
   baseDelayMs: number;
   maxDelayMs: number;
@@ -33,6 +36,9 @@ export class ExponentialBackoff {
     }
     if (!Number.isInteger(maxDelayMs) || maxDelayMs < baseDelayMs) {
       throw new InvalidBackoffError('maxDelayMs must be an integer not lower than baseDelayMs');
+    }
+    if (maxDelayMs > MAX_BACKOFF_DELAY_MS) {
+      throw new InvalidBackoffError('maxDelayMs must not exceed 24 hours');
     }
     if (!Number.isFinite(jitterRatio) || jitterRatio < 0 || jitterRatio > 1) {
       throw new InvalidBackoffError('jitterRatio must be a number between 0 and 1');

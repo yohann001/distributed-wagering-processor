@@ -35,14 +35,14 @@ export class WalletBalanceChanged extends IntegrationEvent<WalletBalanceChangedD
     super(props);
   }
 
-  /** Montado logo após a movimentação: `wallet` já reflete o lançamento `entry`. */
+  /** Montado logo após a movimentação: `entry` precisa ser o último lançamento aplicado à instância `wallet`. */
   static from(wallet: Wallet, entry: WalletLedgerEntry, ctx: EventContext): WalletBalanceChanged {
     if (entry.walletId !== wallet.id) {
       throw new InvalidIntegrationEventError(
         `ledger entry ${entry.id} belongs to wallet ${entry.walletId}, not to wallet ${wallet.id}`,
       );
     }
-    if (!entry.balanceAfter.equals(wallet.balance)) {
+    if (wallet.lastLedgerEntryId !== entry.id) {
       throw new InvalidIntegrationEventError(
         `ledger entry ${entry.id} is not the latest movement of wallet ${wallet.id}`,
       );

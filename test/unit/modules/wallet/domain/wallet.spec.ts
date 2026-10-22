@@ -130,6 +130,32 @@ describe('Wallet.open', () => {
       }),
     ).toThrow(InvalidWalletOpeningError);
   });
+
+  it.each(['id', 'playerId'] as const)('rejects an empty or blank %s', (field) => {
+    for (const value of ['', '  ']) {
+      expect(() =>
+        Wallet.open({
+          id: 'wallet-1',
+          playerId: 'player-1',
+          initialBalance: brl('0.00'),
+          openedAt: OPENED_AT,
+          [field]: value,
+        }),
+      ).toThrow(InvalidWalletOpeningError);
+    }
+  });
+
+  it.each(['0.00', '10.00'])('rejects an invalid openedAt with initial balance %s', (amount) => {
+    expect(() =>
+      Wallet.open({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        initialBalance: brl(amount),
+        openedAt: new Date(Number.NaN),
+        ...(amount === '0.00' ? {} : { opening: OPENING }),
+      }),
+    ).toThrow(InvalidWalletOpeningError);
+  });
 });
 
 describe('Wallet.debit', () => {
@@ -326,6 +352,49 @@ describe('Wallet.rehydrate', () => {
     );
     expect(wallet.balance.isNegative()).toBe(true);
     expect(wallet.version).toBe(0);
+  });
+});
+
+describe('Wallet.lastLedgerEntryId', () => {
+  it('is the opening entry id after opening with a balance', () => {
+    const { wallet, openingEntry } = openWith('100.00');
+    expect(wallet.lastLedgerEntryId).toBe((openingEntry as WalletLedgerEntry).id);
+  });
+
+  it('is undefined after opening with a zero balance', () => {
+    const { wallet } = openWith('0.00');
+    expect(wallet.lastLedgerEntryId).toBeUndefined();
+  });
+
+  it('follows the latest debit and credit', () => {
+    const { wallet } = openWith('100.00');
+
+    const debit = wallet.debit(movement('30.00', 1));
+    expect(wallet.lastLedgerEntryId).toBe(debit.id);
+
+    const credit = wallet.credit(movement('10.00', 2));
+    expect(wallet.lastLedgerEntryId).toBe(credit.id);
+  });
+
+  it('does not change when a debit fails for insufficient funds', () => {
+    const { wallet, openingEntry } = openWith('100.00');
+
+    expect(() => wallet.debit(movement('500.00', 1))).toThrow(InsufficientFundsError);
+
+    expect(wallet.lastLedgerEntryId).toBe((openingEntry as WalletLedgerEntry).id);
+  });
+
+  it('is undefined on a rehydrated wallet without movement', () => {
+    const wallet = Wallet.rehydrate({
+      id: 'wallet-1',
+      playerId: 'player-1',
+      currency: 'BRL',
+      balance: brl('55.00'),
+      version: 7,
+      createdAt: OPENED_AT,
+      updatedAt: LATER,
+    });
+    expect(wallet.lastLedgerEntryId).toBeUndefined();
   });
 });
 

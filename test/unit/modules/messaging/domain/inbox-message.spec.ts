@@ -156,6 +156,16 @@ describe('InboxMessage: immutability of dates', () => {
   });
 });
 
+describe('InboxMessage.matchesPayload', () => {
+  it('is true for the same payload hash', () => {
+    expect(InboxMessage.receive(props({ payloadHash: 'hash-1' })).matchesPayload('hash-1')).toBe(true);
+  });
+
+  it('is false for another payload hash', () => {
+    expect(InboxMessage.receive(props({ payloadHash: 'hash-1' })).matchesPayload('hash-2')).toBe(false);
+  });
+});
+
 describe('InvalidInboxMessageError', () => {
   it('is an invariant violation that must not be retried', () => {
     const error = new InvalidInboxMessageError('x');

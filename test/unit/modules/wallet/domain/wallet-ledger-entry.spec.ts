@@ -94,6 +94,25 @@ describe('WalletLedgerEntry.create: unbalanced entries', () => {
   ])('rejects %s', (_label, props) => {
     expect(() => WalletLedgerEntry.create(props)).toThrow(InvalidLedgerEntryError);
   });
+
+  it('names the ids in the message and never the financial values (§12)', () => {
+    let error: unknown;
+    try {
+      WalletLedgerEntry.create(
+        credit({ balanceBefore: brl('975.00'), balanceAfter: brl('975.00'), money: brl('25.00') }),
+      );
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeInstanceOf(InvalidLedgerEntryError);
+    const { message } = error as InvalidLedgerEntryError;
+    expect(message).not.toContain('25.00');
+    expect(message).not.toContain('975.00');
+    expect(message).toContain('entry-1');
+    expect(message).toContain('wallet-1');
+    expect(message).toContain('tx-1');
+  });
 });
 
 describe('WalletLedgerEntry.create: mixed currencies', () => {

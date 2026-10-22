@@ -124,6 +124,8 @@ describe('ExponentialBackoff: invalid input', () => {
     ['maxDelayMs lower than baseDelayMs', { maxDelayMs: 999 }],
     ['fractional maxDelayMs', { maxDelayMs: 60000.5 }],
     ['infinite maxDelayMs', { maxDelayMs: Number.POSITIVE_INFINITY }],
+    ['maxDelayMs above 24 hours', { maxDelayMs: 86_400_001 }],
+    ['maxDelayMs at MAX_SAFE_INTEGER', { maxDelayMs: Number.MAX_SAFE_INTEGER }],
     ['negative jitterRatio', { jitterRatio: -0.1 }],
     ['jitterRatio above 1', { jitterRatio: 1.1 }],
     ['NaN jitterRatio', { jitterRatio: Number.NaN }],
@@ -138,6 +140,10 @@ describe('ExponentialBackoff: invalid input', () => {
     ['Infinity', Number.POSITIVE_INFINITY],
   ])('rejects a random source that returns %s', (_label, value) => {
     expectInvalid(caught(() => make(() => value).delayMs(1)));
+  });
+
+  it('accepts a maxDelayMs of exactly 24 hours', () => {
+    expect(make(NEVER_JITTER, { maxDelayMs: 86_400_000 }).delayMs(40)).toBe(86_400_000);
   });
 
   it('accepts the boundary options', () => {

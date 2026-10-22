@@ -65,6 +65,7 @@ export class Wallet {
     private _version: number,
     createdAt: Date,
     updatedAt: Date,
+    private _lastLedgerEntryId: string | undefined,
   ) {
     this._createdAt = new Date(createdAt.getTime());
     this._updatedAt = new Date(updatedAt.getTime());
@@ -76,6 +77,15 @@ export class Wallet {
    */
   static open(props: OpenWalletProps): OpenedWallet {
     const { id, playerId, initialBalance, openedAt, opening } = props;
+    // Erro de programação: a borda (T19) valida com zod antes.
+    for (const [field, value] of [['id', id], ['playerId', playerId]] as const) {
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new InvalidWalletOpeningError(`${field} must not be blank`);
+      }
+    }
+    if (!(openedAt instanceof Date) || Number.isNaN(openedAt.getTime())) {
+      throw new InvalidWalletOpeningError('openedAt must be a valid date');
+    }
     if (initialBalance.isNegative()) {
       throw new InvalidWalletOpeningError('initial balance must not be negative');
     }
@@ -109,6 +119,7 @@ export class Wallet {
       1,
       openedAt,
       openedAt,
+      openingEntry?.id,
     );
     return { wallet, openingEntry };
   }
@@ -123,6 +134,7 @@ export class Wallet {
       state.version,
       state.createdAt,
       state.updatedAt,
+      undefined,
     );
   }
 
@@ -132,6 +144,11 @@ export class Wallet {
 
   get version(): number {
     return this._version;
+  }
+
+  /** Id do lançamento aplicado por esta instância; undefined em wallet reidratada sem movimento. */
+  get lastLedgerEntryId(): string | undefined {
+    return this._lastLedgerEntryId;
   }
 
   get createdAt(): Date {
@@ -178,6 +195,7 @@ export class Wallet {
     this._balance = entry.balanceAfter;
     this._version += 1;
     this._updatedAt = entry.createdAt;
+    this._lastLedgerEntryId = entry.id;
     return entry;
   }
 

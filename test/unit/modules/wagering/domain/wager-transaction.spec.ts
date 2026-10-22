@@ -204,6 +204,58 @@ describe('WagerTransaction.create', () => {
     );
   });
 
+  const REQUIRED_FIELDS = [
+    'id',
+    'providerId',
+    'externalTransactionId',
+    'idempotencyKey',
+    'payloadHash',
+    'walletId',
+    'playerId',
+    'roundId',
+    'gameId',
+  ] as const;
+
+  describe.each(REQUIRED_FIELDS)('required field %s', (field) => {
+    it.each(['', '  '])('refuses the empty or blank value %p', (value) => {
+      let error: unknown;
+      try {
+        create(WagerTransactionKind.Bet, { [field]: value });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(InvalidWagerTransactionError);
+      expect((error as InvalidWagerTransactionError).message).toContain(field);
+    });
+  });
+
+  it('refuses an invalid createdAt', () => {
+    let error: unknown;
+    try {
+      create(WagerTransactionKind.Bet, { createdAt: new Date(Number.NaN) });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(InvalidWagerTransactionError);
+    expect((error as InvalidWagerTransactionError).message).toContain('createdAt');
+  });
+
+  it.each([WagerTransactionKind.Win, WagerTransactionKind.Refund])(
+    'refuses a reference made only of spaces on %s',
+    (kind) => {
+      let error: unknown;
+      try {
+        create(kind, { referenceExternalTransactionId: ' ' });
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(InvalidWagerTransactionError);
+      expect((error as InvalidWagerTransactionError).message).toContain(
+        'referenceExternalTransactionId must not be blank',
+      );
+    },
+  );
+
   it('keeps its own copy of createdAt', () => {
     const createdAt = new Date(CREATED_AT.getTime());
     const tx = create(WagerTransactionKind.Bet, { createdAt });
@@ -228,6 +280,21 @@ describe('WagerTransaction.createOpening', () => {
   it('requires a positive amount', () => {
     expect(() =>
       WagerTransaction.createOpening({ ...props(WagerTransactionKind.Bet), money: brl('0.00') }),
+    ).toThrow(InvalidWagerTransactionError);
+  });
+
+  it('refuses an empty walletId', () => {
+    expect(() =>
+      WagerTransaction.createOpening({ ...props(WagerTransactionKind.Bet), walletId: '' }),
+    ).toThrow(InvalidWagerTransactionError);
+  });
+
+  it('refuses an invalid createdAt', () => {
+    expect(() =>
+      WagerTransaction.createOpening({
+        ...props(WagerTransactionKind.Bet),
+        createdAt: new Date(Number.NaN),
+      }),
     ).toThrow(InvalidWagerTransactionError);
   });
 });
@@ -393,13 +460,39 @@ describe('WagerTransaction.reject', () => {
   });
 
   it.each([
+    FailureCode.InvalidPayload,
+    FailureCode.InvalidMoney,
+    FailureCode.KindNotAllowed,
+    FailureCode.ReferenceRequired,
+    FailureCode.IdempotencyConflict,
+    FailureCode.WalletAlreadyExists,
     FailureCode.TransientFailure,
     FailureCode.PermanentFailure,
     FailureCode.InvariantViolation,
-  ])('refuses the non-business code %s', (code) => {
+  ])('refuses %s, which is not a persisted business rejection', (code) => {
     const tx = create(WagerTransactionKind.Bet);
     expect(() => tx.reject(code, brl('50.00'))).toThrow(InvalidWagerTransactionError);
     expect(tx.status).toBe(WagerTransactionStatus.Pending);
+    expect(tx.failureCode).toBeUndefined();
+  });
+
+  it.each([
+    FailureCode.CurrencyMismatch,
+    FailureCode.WalletNotFound,
+    FailureCode.WalletPlayerMismatch,
+    FailureCode.InsufficientFunds,
+    FailureCode.ReversalInsufficientFunds,
+    FailureCode.ReferenceNotFound,
+    FailureCode.ReferenceMismatch,
+    FailureCode.InvalidReferenceKind,
+    FailureCode.ReferenceAmountMismatch,
+    FailureCode.ReferenceNotProcessed,
+    FailureCode.AlreadyReversed,
+  ])('accepts the persisted business rejection %s', (code) => {
+    const tx = create(WagerTransactionKind.Bet);
+    tx.reject(code, brl('50.00'));
+    expect(tx.status).toBe(WagerTransactionStatus.Rejected);
+    expect(tx.failureCode).toBe(code);
   });
 
   it('refuses an observed balance in another currency or negative', () => {

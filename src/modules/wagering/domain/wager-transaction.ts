@@ -37,11 +37,22 @@ const TERMINAL_STATUSES: ReadonlySet<WagerTransactionStatus> = new Set([
   WagerTransactionStatus.Failed,
 ]);
 
-/** Códigos de infraestrutura/interno: não são rejeição de negócio. */
-const NON_BUSINESS_CODES: ReadonlySet<FailureCode> = new Set([
-  FailureCode.TransientFailure,
-  FailureCode.PermanentFailure,
-  FailureCode.InvariantViolation,
+/**
+ * Códigos que uma transação pode carregar em REJECTED: a coluna "REJECTED persistido" da tabela
+ * de códigos do ARCHITECTURE.md. Os de resposta síncrona e os de infraestrutura ficam de fora.
+ */
+const PERSISTED_REJECTION_CODES: ReadonlySet<FailureCode> = new Set([
+  FailureCode.CurrencyMismatch,
+  FailureCode.WalletNotFound,
+  FailureCode.WalletPlayerMismatch,
+  FailureCode.InsufficientFunds,
+  FailureCode.ReversalInsufficientFunds,
+  FailureCode.ReferenceNotFound,
+  FailureCode.ReferenceMismatch,
+  FailureCode.InvalidReferenceKind,
+  FailureCode.ReferenceAmountMismatch,
+  FailureCode.ReferenceNotProcessed,
+  FailureCode.AlreadyReversed,
 ]);
 
 export interface CreateWagerTransactionProps {
@@ -108,6 +119,34 @@ export class InvalidWagerTransactionError extends DomainError {
   }
 }
 
+const REQUIRED_TEXT_FIELDS = [
+  'id',
+  'providerId',
+  'externalTransactionId',
+  'idempotencyKey',
+  'payloadHash',
+  'walletId',
+  'playerId',
+  'roundId',
+  'gameId',
+] as const;
+
+/** Erro de programação: a borda (T19/T22) valida com zod antes. As mensagens citam só o nome do campo. */
+function assertNotBlank(field: string, value: unknown): void {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new InvalidWagerTransactionError(`${field} must not be blank`);
+  }
+}
+
+function assertRequiredFields(props: CreateOpeningProps): void {
+  for (const field of REQUIRED_TEXT_FIELDS) {
+    assertNotBlank(field, props[field]);
+  }
+  if (!(props.createdAt instanceof Date) || Number.isNaN(props.createdAt.getTime())) {
+    throw new InvalidWagerTransactionError('createdAt must be a valid date');
+  }
+}
+
 export class WagerTransaction {
   private readonly _createdAt: Date;
   private _processedAt: Date | undefined;
@@ -139,11 +178,16 @@ export class WagerTransaction {
   /** Transação vinda de provedor (API ou fila). Nasce PENDING. */
   static create(props: CreateWagerTransactionProps): WagerTransaction {
     const { kind, money, referenceExternalTransactionId } = props;
-    if (!SUBMITTABLE_KINDS.has(kind)) {
+    if (!WagerTransaction.isSubmittableKind(kind)) {
       throw new KindNotAllowedError(String(kind));
     }
+    assertRequiredFields(props);
     if (WagerTransaction.kindRequiresReference(kind) && !referenceExternalTransactionId) {
       throw new ReferenceRequiredError(kind);
+    }
+    // '' vira undefined (contrato do payload hash); só espaços não é referência.
+    if (referenceExternalTransactionId !== undefined && referenceExternalTransactionId !== '') {
+      assertNotBlank('referenceExternalTransactionId', referenceExternalTransactionId);
     }
     // LOSS só registra o resultado; os demais geram lançamento, que exige valor positivo.
     if (kind !== WagerTransactionKind.Loss && !money.isPositive()) {
@@ -159,8 +203,14 @@ export class WagerTransaction {
     });
   }
 
+  /** Kinds que um provedor pode submeter (tudo menos OPENING). */
+  static isSubmittableKind(kind: string): boolean {
+    return SUBMITTABLE_KINDS.has(kind);
+  }
+
   /** Crédito interno de abertura da wallet: único caminho para um OPENING. */
   static createOpening(props: CreateOpeningProps): WagerTransaction {
+    assertRequiredFields(props);
     if (!props.money.isPositive()) {
       throw new InvalidWagerTransactionError('opening requires a positive amount');
     }
@@ -256,8 +306,8 @@ export class WagerTransaction {
    */
   reject(code: FailureCode, balanceAfter: Money | null): void {
     this.assertNotTerminal('reject');
-    if (NON_BUSINESS_CODES.has(code)) {
-      throw new InvalidWagerTransactionError(`${code} is not a business rejection`);
+    if (!PERSISTED_REJECTION_CODES.has(code)) {
+      throw new InvalidWagerTransactionError(`${code} is not a persisted business rejection`);
     }
     if (balanceAfter !== null) {
       this.assertObservedBalance(balanceAfter);

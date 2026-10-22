@@ -3,11 +3,18 @@ import Decimal from 'decimal.js';
 import { DomainError } from './domain-error';
 import { FailureCode } from './failure-code';
 
-/** Precisão alta para que somas de valores grandes nunca arredondem (o padrão são 20 dígitos). */
+/**
+ * Precisão alta (o padrão são 20 dígitos). Com o teto de `MAX_INTEGER_DIGITS` inteiros mais
+ * 2 casas, somas e subtrações cabem com folga e nunca arredondam em silêncio.
+ */
 const MoneyDecimal = Decimal.clone({ precision: 64, rounding: Decimal.ROUND_HALF_EVEN });
 
 const SCALE = 2;
-const AMOUNT_PATTERN = /^(0|[1-9]\d*)\.\d{2}$/;
+/** Casa com a coluna `numeric(18,2)` do T10: 16 dígitos inteiros + 2 casas. */
+const MAX_INTEGER_DIGITS = 16;
+/** Limite exclusivo do valor absoluto: 10^16. */
+const MAX_ABS = new MoneyDecimal(10).pow(MAX_INTEGER_DIGITS);
+const AMOUNT_PATTERN = new RegExp(`^(0|[1-9]\\d{0,${MAX_INTEGER_DIGITS - 1}})\\.\\d{2}$`);
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
 export interface MoneyProps {
@@ -109,8 +116,14 @@ export class Money {
     return `${this.value.toFixed(SCALE)} ${this.currency}`;
   }
 
-  /** Único ponto de construção: normaliza o zero negativo (-0) para zero. */
+  /**
+   * Único ponto de construção: recusa valor acima do teto de dígitos (vale para add, subtract e
+   * negate, e para negativos) e normaliza o zero negativo (-0) para zero.
+   */
   private static of(value: Decimal, currency: string): Money {
+    if (value.abs().greaterThanOrEqualTo(MAX_ABS)) {
+      throw new InvalidMoneyError(`amount exceeds ${MAX_INTEGER_DIGITS} integer digits`);
+    }
     const normalized = value.isZero() ? new MoneyDecimal(0) : value;
     return new Money(normalized, currency);
   }

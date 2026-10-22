@@ -78,15 +78,16 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 ## Fase 2 — Persistência e schema
 
 ### [ ] T10 — Schema e migrations iniciais com constraints
-- **Descrição:** Migrations versionadas e reversíveis para `wallets`, `wager_transactions`, `wallet_ledger_entries`, `inbox_messages` e `outbox_messages`. Valores em `numeric(…,2)`. Garantias aplicadas no banco:
+- **Descrição:** Migrations versionadas e reversíveis para `wallets`, `wager_transactions`, `wallet_ledger_entries`, `inbox_messages` e `outbox_messages`. Valores em `numeric(18,2)`, o mesmo teto de 16 dígitos inteiros que o `Money` valida. Garantias aplicadas no banco:
   - `CHECK (balance >= 0)` e `CHECK (version >= 1)`;
   - `UNIQUE (player_id, currency)`;
-  - `UNIQUE (provider_id, external_transaction_id)` e unicidade da idempotency key;
+  - `UNIQUE (provider_id, external_transaction_id)` e `UNIQUE (provider_id, idempotency_key)` (a key nunca é global entre provedores);
   - `UNIQUE (transaction_id, wallet_id)` no ledger;
   - `CHECK` da aritmética do lançamento e moeda consistente;
   - ledger imutável (trigger bloqueando `UPDATE`/`DELETE`);
-  - índice único parcial impedindo dupla reversão da mesma referência pelo mesmo kind;
-  - `CHECK` de status/kind válidos;
+  - índice único parcial `UNIQUE (reference_transaction_id) WHERE kind IN ('REFUND','ROLLBACK') AND status = 'PROCESSED'`. Como `REFUND` só aponta `BET`, esse único índice cobre a reversão única por tipo e a exclusão entre `REFUND` e `ROLLBACK` da mesma `BET` (decisão da T06);
+  - `CHECK` de status/kind válidos, incluindo `kind = 'OPENING'` ⇒ `status = 'PROCESSED'`;
+  - payload da outbox: decidir `json` ou `jsonb` e documentar. O `jsonb` reordena as chaves, então a ordem fixa do envelope só sobrevive em `json`/`text`;
   - PK `(consumer_name, message_id)` no inbox;
   - índice para outbox pendente (`published_at IS NULL`, `next_attempt_at`);
   - índices para o worker de `PENDING_REFERENCE` e para a paginação do ledger.
@@ -158,7 +159,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 ## Fase 4 — Borda HTTP e infraestrutura de entrada
 
 ### [ ] T19 — API HTTP e mapeamento de status
-- **Descrição:** Controllers para `POST /wallets`, `GET /wallets/:walletId`, `GET /wallets/:walletId/ledger`, `POST /wagering/transactions` (header `Idempotency-Key` obrigatório), `GET /wagering/transactions/:transactionId`, `GET /providers/:providerId/wagering/transactions/:externalTransactionId` e `POST /wallets/:walletId/reconciliation`. DTOs validados com zod. Rejeitar `OPENING`. Filtro global de exceções com mapeamento **consistente** que distinga: payload inválido, conflito de idempotência, rejeição de negócio, aceite com processamento pendente, falha transitória de infraestrutura (com `Retry-After`) e não encontrado.
+- **Descrição:** Controllers para `POST /wallets`, `GET /wallets/:walletId`, `GET /wallets/:walletId/ledger`, `POST /wagering/transactions` (header `Idempotency-Key` obrigatório), `GET /wagering/transactions/:transactionId`, `GET /providers/:providerId/wagering/transactions/:externalTransactionId` e `POST /wallets/:walletId/reconciliation`. DTOs validados com zod. Rejeitar `OPENING`. Antes do hash e da key, normalizar ids UUID para minúsculas e recusar `:` em `providerId`, porque `defaultIdempotencyKey` usa `:` como separador. Filtro global de exceções com mapeamento **consistente** que distinga: payload inválido, conflito de idempotência, rejeição de negócio, aceite com processamento pendente, falha transitória de infraestrutura (com `Retry-After`) e não encontrado.
 - **Critério de aceite:** testes e2e (app real + Postgres) para cada endpoint e cada classe de resposta. Tabela de status HTTP documentada no `ARCHITECTURE.md`. Formato de `Money` sempre `{ amount: string, currency }`.
 - **Seção:** §9, §6.3 (OPENING interno)
 - **Depende de:** T15–T18
@@ -185,7 +186,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
   - transitório: retry com backoff via `ChangeMessageVisibility`;
   - permanente ou envelope inválido: DLQ.
 
-  Limite de tentativas antes da DLQ (`maxReceiveCount` + contagem própria). Em `SIGTERM`: parar o polling, concluir as mensagens em andamento ou devolver a visibilidade (`ChangeMessageVisibility 0`). `MessageGroupId = walletId` como otimização, sem servir de garantia.
+  Mesma normalização de ids da T19. `messageId` já registrado com `payloadHash` diferente (`InboxMessage.matchesPayload`) vai para a DLQ, nunca é confirmado como duplicata. Limite de tentativas antes da DLQ (`maxReceiveCount` + contagem própria). Em `SIGTERM`: parar o polling, concluir as mensagens em andamento ou devolver a visibilidade (`ChangeMessageVisibility 0`). `MessageGroupId = walletId` como otimização, sem servir de garantia.
 - **Critério de aceite:** testes de integração com LocalStack real: mensagem processada e removida; mesma mensagem reentregue sem duplicar efeito; erro de negócio com ack; erro transitório reentregue com backoff; mensagem venenosa na DLQ após o limite; shutdown sem perder mensagem.
 - **Seção:** §10, §5.3
 - **Depende de:** T16, T21

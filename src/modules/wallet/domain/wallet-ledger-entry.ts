@@ -72,7 +72,7 @@ export class WalletLedgerEntry {
     const entry = WalletLedgerEntry.rehydrate(props);
     if (!entry.isBalanced()) {
       throw new InvalidLedgerEntryError(
-        `${direction} of ${money.toString()} from ${balanceBefore.toString()} does not result in ${balanceAfter.toString()}`,
+        `${direction} entry ${props.id} of wallet ${props.walletId} (transaction ${props.transactionId}) is not balanced`,
       );
     }
     return entry;

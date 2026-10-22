@@ -216,6 +216,17 @@ describe('OutboxMessage.scheduleRetry', () => {
     expect(outbox.nextAttemptAt.toISOString()).toBe('2026-10-21T12:00:00.000Z');
   });
 
+  it('rejects a retry whose next attempt falls outside the valid Date range and changes nothing', () => {
+    const outbox = OutboxMessage.enqueue(event());
+    const latestValidDate = new Date(8_640_000_000_000_000);
+
+    const error = caught(() => outbox.scheduleRetry(latestValidDate, noJitter()));
+
+    expect(error).toBeInstanceOf(InvalidOutboxMessageError);
+    expect(outbox.attempts).toBe(0);
+    expect(outbox.nextAttemptAt.toISOString()).toBe('2026-10-21T12:00:00.000Z');
+  });
+
   it('rejects an invalid now and changes nothing', () => {
     const outbox = OutboxMessage.enqueue(event());
 

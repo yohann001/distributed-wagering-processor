@@ -173,6 +173,44 @@ describe('WalletBalanceChanged: inconsistent source', () => {
     );
   });
 
+  it('refuses the opening entry once later movements brought the balance back to the same value', () => {
+    const { wallet, openingEntry } = Wallet.open({
+      id: 'wallet-1',
+      playerId: 'player-1',
+      initialBalance: brl('100.00'),
+      openedAt: OPENED_AT,
+      opening: { transactionId: 'tx-opening', ledgerEntryId: 'entry-opening' },
+    });
+    wallet.credit(movement('10.00', 1));
+    wallet.debit(movement('10.00', 2));
+    expect(wallet.balance.equals((openingEntry as WalletLedgerEntry).balanceAfter)).toBe(true);
+
+    const error = caught(() => WalletBalanceChanged.from(wallet, openingEntry as WalletLedgerEntry, CTX));
+
+    expect(error).toBeInstanceOf(InvalidIntegrationEventError);
+    expect((error as InvalidIntegrationEventError).message).toBe(
+      'Invalid integration event: ledger entry entry-opening is not the latest movement of wallet wallet-1',
+    );
+  });
+
+  it('refuses any entry for a rehydrated wallet that has not moved', () => {
+    const source = openWallet();
+    const entry = source.debit(movement('80.00', 1));
+    const rehydrated = Wallet.rehydrate({
+      id: source.id,
+      playerId: source.playerId,
+      currency: source.currency,
+      balance: source.balance,
+      version: source.version,
+      createdAt: source.createdAt,
+      updatedAt: source.updatedAt,
+    });
+
+    expect(() => WalletBalanceChanged.from(rehydrated, entry, CTX)).toThrow(
+      InvalidIntegrationEventError,
+    );
+  });
+
   it('rejects an invalid context through the envelope guards', () => {
     const wallet = openWallet();
     const entry = wallet.debit(movement('80.00', 1));

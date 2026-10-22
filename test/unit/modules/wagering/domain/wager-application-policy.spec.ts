@@ -480,6 +480,27 @@ describe('WagerApplicationPolicy', () => {
         });
       });
 
+      it('ignores a PROCESSED REFUND that points at another BET', () => {
+        const w = wallet();
+        const t = tx(WagerTransactionKind.Refund);
+
+        const outcome = apply(t, w, {
+          reference: ref(WagerTransactionKind.Bet),
+          reversalsOfReference: [
+            reversal(WagerTransactionKind.Refund, 'rf-other', {
+              referenceTransactionId: 'tx-other-bet',
+            }),
+          ],
+        });
+
+        expectApplied(outcome, t, w, {
+          direction: 'CREDIT',
+          from: '100.00',
+          to: '180.00',
+          referenceId: 'ref-1',
+        });
+      });
+
       it('does not count the transaction itself among the reversals', () => {
         const w = wallet();
         const t = tx(WagerTransactionKind.Refund);
@@ -1016,6 +1037,34 @@ describe('WagerApplicationPolicy', () => {
 
       expect(error).toBeInstanceOf(InvalidWagerTransactionError);
       expect<string>(t.status).toBe('PENDING');
+      expect(w.balance.toJSON()).toEqual(brl(INITIAL_BALANCE).toJSON());
+      expect(w.version).toBe(INITIAL_VERSION);
+    });
+
+    it('throws InvalidTransactionStateError for a rehydrated transaction with an unknown status and leaves the wallet intact', () => {
+      const w = wallet();
+      const unknown = ref(WagerTransactionKind.Bet, {
+        status: 'SETTLED' as WagerTransactionStatus,
+        processedAt: undefined,
+        balanceAfter: undefined,
+      });
+
+      const error = catchError(() => apply(unknown, w));
+
+      expect(error).toBeInstanceOf(InvalidTransactionStateError);
+      expect<string>(unknown.status).toBe('SETTLED');
+      expect(w.balance.toJSON()).toEqual(brl(INITIAL_BALANCE).toJSON());
+      expect(w.version).toBe(INITIAL_VERSION);
+    });
+
+    it('throws InvalidWagerTransactionError for a rehydrated OPENING in PENDING and leaves the wallet intact', () => {
+      const w = wallet();
+      const opening = undecidedRef(WagerTransactionKind.Opening, WagerTransactionStatus.Pending);
+
+      const error = catchError(() => apply(opening, w));
+
+      expect(error).toBeInstanceOf(InvalidWagerTransactionError);
+      expect<string>(opening.status).toBe('PENDING');
       expect(w.balance.toJSON()).toEqual(brl(INITIAL_BALANCE).toJSON());
       expect(w.version).toBe(INITIAL_VERSION);
     });

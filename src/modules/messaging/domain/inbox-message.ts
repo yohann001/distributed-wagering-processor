@@ -83,6 +83,11 @@ export class InboxMessage {
     return this._processedAt !== undefined;
   }
 
+  /** O mesmo `messageId` com hash diferente não é duplicata: o consumer (T22) manda para a DLQ. */
+  matchesPayload(payloadHash: string): boolean {
+    return this.payloadHash === payloadHash;
+  }
+
   // ---- transições
 
   markProcessed(at: Date): void {

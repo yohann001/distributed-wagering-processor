@@ -28,6 +28,11 @@ export class LogContext {
     return storage.run(new Store(this.root.child(bindings)), fn);
   }
 
+  /** Logger do escopo atual (requisição HTTP ou `run`), com os campos de contexto; fora de escopo, o `ROOT_LOGGER` do app. */
+  current(): pino.Logger {
+    return storage.getStore()?.logger ?? this.root;
+  }
+
   /** Acrescenta campos aos logs do restante do escopo atual (também dentro de uma requisição HTTP). */
   assign(bindings: Partial<LogContextFields>): void {
     const store = storage.getStore();

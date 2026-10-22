@@ -2,8 +2,10 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 
 import { assertInTransaction } from '../../../../infrastructure/database/assert-in-transaction';
+import { Money } from '../../../../shared/domain/money';
 import {
   WalletLedgerRepository,
+  type LedgerBalanceSnapshot,
   type LedgerPage,
   type LedgerPageQuery,
 } from '../../application/wallet-ledger-repository';
@@ -13,6 +15,14 @@ import {
   walletLedgerEntryFromRow,
   walletLedgerEntryToRow,
 } from './wallet-ledger-entry.persistence';
+
+interface BalanceSnapshotRow {
+  currency: string;
+  stored_balance: string;
+  credits: string;
+  debits: string;
+  entry_count: number;
+}
 
 @Injectable()
 export class MikroOrmWalletLedgerRepository extends WalletLedgerRepository {
@@ -47,5 +57,33 @@ export class MikroOrmWalletLedgerRepository extends WalletLedgerRepository {
       nextPosition = lastSeq;
     }
     return { entries: page.map(walletLedgerEntryFromRow), nextPosition };
+  }
+
+  async balanceSnapshot(walletId: string): Promise<LedgerBalanceSnapshot | null> {
+    // Um único statement: saldo e soma saem do mesmo snapshot, então um commit entre duas leituras não fabrica divergência.
+    const rows = await this.em.execute<BalanceSnapshotRow[]>(
+      `select w.currency,
+              w.balance::text as stored_balance,
+              coalesce(sum(e.amount) filter (where e.direction = 'CREDIT'), 0)::numeric(18,2)::text as credits,
+              coalesce(sum(e.amount) filter (where e.direction = 'DEBIT'), 0)::numeric(18,2)::text as debits,
+              count(e.id)::int as entry_count
+         from wallets w
+         left join wallet_ledger_entries e on e.wallet_id = w.id
+        where w.id = ?
+        group by w.id`,
+      [walletId],
+    );
+    const row = rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    const { currency } = row;
+    return {
+      storedBalance: Money.from({ amount: row.stored_balance, currency }),
+      ledgerBalance: Money.from({ amount: row.credits, currency }).subtract(
+        Money.from({ amount: row.debits, currency }),
+      ),
+      entryCount: row.entry_count,
+    };
   }
 }

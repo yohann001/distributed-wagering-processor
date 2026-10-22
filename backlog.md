@@ -148,7 +148,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §9 (Consultas)
 - **Depende de:** T16
 
-### [ ] T18 — Use case de reconciliação
+### [x] T18 — Use case de reconciliação
 - **Descrição:** Recalcula o saldo pelo ledger e compara com o saldo materializado. Devolve `storedBalance`, `calculatedBalance`, `difference`, `consistent` e `checkedEntries`. Divergência é logada, contabilizada em métrica e sinalizada, **sem** correção silenciosa.
 - **Critério de aceite:** teste com wallet consistente (`consistent: true`) e teste com divergência forçada via SQL, que retorna `consistent: false`, incrementa a métrica, gera log e não altera dados.
 - **Seção:** §9 (Reconciliação)

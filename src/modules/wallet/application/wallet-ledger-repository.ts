@@ -1,3 +1,4 @@
+import type { Money } from '../../../shared/domain/money';
 import type { WalletLedgerEntry } from '../domain/wallet-ledger-entry';
 
 export interface LedgerPageQuery {
@@ -13,6 +14,14 @@ export interface LedgerPage {
   nextPosition: string | null;
 }
 
+export interface LedgerBalanceSnapshot {
+  /** Saldo materializado em `wallets.balance`. */
+  storedBalance: Money;
+  /** Soma do ledger: CREDIT − DEBIT. */
+  ledgerBalance: Money;
+  entryCount: number;
+}
+
 /** Porta de persistência do ledger (append-only). `append` exige transação ativa. */
 export abstract class WalletLedgerRepository {
   abstract append(entry: WalletLedgerEntry): Promise<void>;
@@ -25,4 +34,10 @@ export abstract class WalletLedgerRepository {
    * percorrer as páginas nunca pula nem repete itens.
    */
   abstract listByWallet(query: LedgerPageQuery): Promise<LedgerPage>;
+
+  /**
+   * Saldo materializado e soma do ledger da wallet lidos num único statement (um snapshot do READ COMMITTED),
+   * sem lock: um commit concorrente nunca aparece só de um dos lados. `null` quando a wallet não existe.
+   */
+  abstract balanceSnapshot(walletId: string): Promise<LedgerBalanceSnapshot | null>;
 }

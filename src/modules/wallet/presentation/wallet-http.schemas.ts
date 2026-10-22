@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { idText, uuidText } from '../../../infrastructure/http/request-schemas';
 import type { MoneyProps } from '../../../shared/domain/money';
 import type { WalletReconciliation } from '../application/reconcile-wallet';
-import type { LedgerPageResult } from '../application/wallet-queries';
+import { LEDGER_PAGE_MAX_LIMIT, type LedgerPageResult } from '../application/wallet-queries';
 import type { Wallet } from '../domain/wallet';
 import type { LedgerDirection, WalletLedgerEntry } from '../domain/wallet-ledger-entry';
 
@@ -20,7 +20,7 @@ export const ledgerQuery = z.object({
   cursor: z.string().optional(),
   limit: z
     .string()
-    .regex(/^\d{1,4}$/, 'must be an integer')
+    .regex(/^\d{1,4}$/, `must be an integer between 1 and ${LEDGER_PAGE_MAX_LIMIT}`)
     .transform(Number)
     .optional(),
 });

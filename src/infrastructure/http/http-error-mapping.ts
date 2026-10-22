@@ -1,5 +1,6 @@
 import { HttpException } from '@nestjs/common';
 
+import { InvalidQueryError } from '../../shared/application/invalid-query-error';
 import { DomainError } from '../../shared/domain/domain-error';
 import { FailureCode, failureActionOf, type FailureAction } from '../../shared/domain/failure-code';
 import { isTransientDatabaseFailure } from '../database/mikro-orm-unit-of-work';
@@ -83,6 +84,9 @@ function fromDomainError(error: DomainError): HttpErrorResponse {
   const body = bodyOf(error.code, error.message);
   if (error instanceof InvalidRequestError) {
     body.issues = error.issues;
+  } else if (error instanceof InvalidQueryError) {
+    // Mesmo formato do zod da borda: o parâmetro validado depois (faixa do `limit`, cursor) também sai em `issues`.
+    body.issues = [{ path: `query.${error.field}`, message: error.detail }];
   }
   return { status, body, logLevel: 'none' };
 }
@@ -97,8 +101,33 @@ function fromFrameworkError(error: HttpException): HttpErrorResponse {
   return { status, body: bodyOf(FailureCode.InvalidPayload, message), logLevel: 'none' };
 }
 
+const CLIENT_ERROR_MESSAGES: Readonly<Record<number, string>> = Object.freeze({
+  413: 'Request body too large',
+  415: 'Unsupported content type, charset or encoding',
+});
+
+/**
+ * Erro 4xx do body-parser (pacote `http-errors`: 413 corpo grande, 415 charset ou encoding, 400 corpo abortado).
+ * O Nest só converte `SyntaxError` em `BadRequestException`; os demais chegam aqui crus, com `status` e
+ * `expose: true`. A mensagem original não é repetida: ela pode citar o corpo.
+ */
+function clientErrorStatusOf(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) {
+    return null;
+  }
+  const { status, expose } = error as { status?: unknown; expose?: unknown };
+  return typeof status === 'number' && status >= 400 && status < 500 && expose === true ? status : null;
+}
+
 /** Único ponto que decide status, corpo, `Retry-After` e nível de log de um erro que chegou à borda HTTP. */
 export function mapErrorToHttp(error: unknown): HttpErrorResponse {
+  // Antes da checagem transitória: um socket do cliente que cai no meio do corpo chega como 400 do body-parser
+  // com o `code` do socket (`ECONNRESET`), que não é falha do banco.
+  const clientStatus = clientErrorStatusOf(error);
+  if (clientStatus !== null) {
+    const message = CLIENT_ERROR_MESSAGES[clientStatus] ?? 'Malformed request';
+    return { status: clientStatus, body: bodyOf(FailureCode.InvalidPayload, message), logLevel: 'none' };
+  }
   if (isTransientDatabaseFailure(error)) {
     return transient();
   }

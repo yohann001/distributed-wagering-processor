@@ -27,6 +27,7 @@ import {
   ConcurrencyConflictError,
   ConcurrencyConflictReason,
 } from '../../../../src/shared/application/unit-of-work';
+import { InvalidQueryError } from '../../../../src/shared/application/invalid-query-error';
 import { InvalidTransactionStateError } from '../../../../src/shared/domain/domain-error';
 import { FailureAction, FailureCode } from '../../../../src/shared/domain/failure-code';
 import { InvalidMoneyError } from '../../../../src/shared/domain/money';
@@ -159,6 +160,48 @@ describe('mapErrorToHttp', () => {
     expect(mapped.status).toBe(404);
     expect(mapped.body.failureCode).toBe(FailureCode.InvalidPayload);
     expect(mapped.body.message).toBe('Route not found');
+  });
+
+  /** O formato que o pacote `http-errors` dá aos erros do body-parser: `status` numérico e `expose`. */
+  function bodyParserError(status: number, message: string, expose = status < 500): Error {
+    return Object.assign(new Error(message), { status, statusCode: status, expose });
+  }
+
+  it.each([
+    ['a body over the limit', 413, 'Request body too large'],
+    ['an unsupported charset', 415, 'Unsupported content type, charset or encoding'],
+    ['an aborted request', 400, 'Malformed request'],
+  ])('maps a body-parser error for %s to its 4xx with INVALID_PAYLOAD and no log', (_name, status, message) => {
+    const mapped = mapErrorToHttp(bodyParserError(status, 'raw body-parser message with body-content-marker'));
+
+    expect(mapped.status).toBe(status);
+    expect(mapped.body).toEqual({ failureCode: FailureCode.InvalidPayload, action: FailureAction.FixPayload, message });
+    expect(mapped.logLevel).toBe('none');
+  });
+
+  it('maps a client socket error wrapped by the body-parser to 400, not to a transient database failure', () => {
+    // O body-parser embrulha o erro do socket do cliente com `createError(400, err)`: o `code` do socket fica.
+    const aborted = Object.assign(bodyParserError(400, 'aborted'), { code: 'ECONNRESET' });
+
+    const mapped = mapErrorToHttp(aborted);
+
+    expect(mapped.status).toBe(400);
+    expect(mapped.body.failureCode).toBe(FailureCode.InvalidPayload);
+    expect(mapped.retryAfterSeconds).toBeUndefined();
+    expect(mapped.logLevel).toBe('none');
+  });
+
+  it('keeps a 5xx-shaped or non-exposed error as an internal error', () => {
+    expect(mapErrorToHttp(bodyParserError(500, 'x')).status).toBe(500);
+    expect(mapErrorToHttp(bodyParserError(400, 'x', false)).status).toBe(500);
+  });
+
+  it('reports an InvalidQueryError in issues under its query parameter', () => {
+    const mapped = mapErrorToHttp(new InvalidQueryError('limit', 'must be an integer between 1 and 100'));
+
+    expect(mapped.status).toBe(400);
+    expect(mapped.body.failureCode).toBe(FailureCode.InvalidPayload);
+    expect(mapped.body.issues).toEqual([{ path: 'query.limit', message: 'must be an integer between 1 and 100' }]);
   });
 });
 

@@ -59,6 +59,11 @@ export function classifyConcurrencyConflict(error: unknown): ConcurrencyConflict
 
 const TRANSIENT_SQLSTATES: ReadonlySet<string> = new Set(['57P01', '57P02', '57P03']);
 const TRANSIENT_SQLSTATE_CLASSES: readonly string[] = ['08', '53'];
+/**
+ * Início da mensagem do `KnexTimeoutError` (pool cheio). Comparada pela mensagem porque o `DriverException` do
+ * MikroORM, que embrulha os erros das leituras (`em.find`, `em.execute`), troca o `name` e não tem `code`.
+ */
+const POOL_ACQUIRE_TIMEOUT_MESSAGE = 'Knex: Timeout acquiring a connection';
 const TRANSIENT_SOCKET_CODES: ReadonlySet<string> = new Set([
   'ECONNREFUSED',
   'ECONNRESET',
@@ -78,7 +83,10 @@ export function isTransientDatabaseFailure(error: unknown): boolean {
   if (classifyConcurrencyConflict(error) !== null || error instanceof ConnectionException) {
     return true;
   }
-  if (error instanceof Error && error.name === 'KnexTimeoutError') {
+  if (
+    error instanceof Error &&
+    (error.name === 'KnexTimeoutError' || error.message.startsWith(POOL_ACQUIRE_TIMEOUT_MESSAGE))
+  ) {
     return true;
   }
   if (typeof error !== 'object' || error === null || !('code' in error)) {

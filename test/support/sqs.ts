@@ -2,20 +2,16 @@ import {
   DeleteMessageBatchCommand,
   PurgeQueueCommand,
   ReceiveMessageCommand,
-  SQSClient,
   type Message,
+  type SQSClient,
 } from '@aws-sdk/client-sqs';
 
 import { loadEnv } from '../../src/config/env';
+import { buildSqsClient } from '../../src/modules/messaging/infrastructure/sqs/sqs-client';
 
-/** Cliente SQS apontado para o LocalStack, com a configuração do `.env`. */
+/** Cliente SQS apontado para o LocalStack, com a configuração do `.env` (a mesma factory da aplicação). */
 export function createTestSqsClient(): SQSClient {
-  const env = loadEnv();
-  return new SQSClient({
-    region: env.AWS_REGION,
-    ...(env.AWS_ENDPOINT_URL !== undefined && { endpoint: env.AWS_ENDPOINT_URL }),
-    credentials: { accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY },
-  });
+  return buildSqsClient(loadEnv());
 }
 
 /** URLs das filas de teste, lidas do `.env`. */

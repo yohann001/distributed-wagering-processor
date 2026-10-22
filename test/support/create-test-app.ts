@@ -1,5 +1,6 @@
 import { SQSClient } from '@aws-sdk/client-sqs';
 import type { INestApplication } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { Logger } from 'nestjs-pino';
 import type { DestinationStream } from 'pino';
@@ -31,7 +32,9 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     builder.overrideProvider(SQSClient).useValue(options.sqsClient);
   }
   const moduleRef = await builder.compile();
-  const app = moduleRef.createNestApplication({ bufferLogs: true });
+  // Mesma configuração de corpo do `main.ts`: só JSON.
+  const app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: true, bodyParser: false });
+  app.useBodyParser('json');
   app.useLogger(app.get(Logger));
   app.enableShutdownHooks();
   await app.listen(0, '127.0.0.1');

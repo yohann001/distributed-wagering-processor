@@ -14,12 +14,15 @@ import { ReadinessProbe, type ReadinessFailure } from './readiness';
     {
       provide: ReadinessProbe,
       inject: [EntityManager, MessageQueue, LogContext],
-      useFactory: (em: EntityManager, queue: MessageQueue, logContext: LogContext) =>
-        new ReadinessProbe(
+      useFactory: (em: EntityManager, queue: MessageQueue, logContext: LogContext) => {
+        const env = loadEnv();
+        return new ReadinessProbe(
           [postgresCheck(em), sqsCheck(queue)],
-          loadEnv().HEALTH_CHECK_TIMEOUT_MS,
+          env.HEALTH_CHECK_TIMEOUT_MS,
           (failure: ReadinessFailure) => logContext.current().warn(failure, 'readiness check failed'),
-        ),
+          { cacheMs: env.HEALTH_CHECK_CACHE_MS },
+        );
+      },
     },
   ],
 })

@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
+import { HTTP_STATUS_BY_FAILURE_CODE } from '../../../infrastructure/http/http-error-mapping';
 import {
   idText,
   moneyFrom,
   providerIdText,
   uuidText,
 } from '../../../infrastructure/http/request-schemas';
-import type { FailureCode } from '../../../shared/domain/failure-code';
+import { FailureCode } from '../../../shared/domain/failure-code';
 import type { MoneyProps } from '../../../shared/domain/money';
 import type {
   SubmitWagerTransactionCommand,
@@ -19,21 +20,34 @@ import {
   type WagerTransaction,
 } from '../domain/wager-transaction';
 
+/** Os kinds que a API e a fila aceitam; `OPENING` é interno e não aparece na mensagem de erro. */
+const PUBLIC_KINDS = Object.values(WagerTransactionKind).filter((kind) => kind !== WagerTransactionKind.Opening);
+const UNKNOWN_KIND_MESSAGE = `Invalid option: expected one of ${PUBLIC_KINDS.map((kind) => `"${kind}"`).join('|')}`;
+
 /**
  * Campos de negócio de uma transação, validados e normalizados (ids UUID em minúsculas, sem `:` no `providerId`).
  * Compartilhado com o consumer SQS (T22): as duas bordas normalizam do mesmo jeito antes do hash.
+ *
+ * O enum continua aceitando `OPENING` para que `toSubmitCommandFields` o recuse com `KIND_NOT_ALLOWED`, mas a
+ * mensagem de kind desconhecido lista só os kinds públicos. Uma transação que referencia a si mesma é recusada:
+ * a referência nunca chegaria e ela ficaria em `PENDING_REFERENCE` para sempre.
  */
-export const wagerTransactionPayloadSchema = z.object({
-  providerId: providerIdText,
-  externalTransactionId: idText,
-  playerId: idText,
-  walletId: uuidText,
-  roundId: idText,
-  gameId: idText,
-  kind: z.enum(WagerTransactionKind),
-  money: z.unknown(),
-  referenceExternalTransactionId: idText.nullish().transform((value) => value ?? undefined),
-});
+export const wagerTransactionPayloadSchema = z
+  .object({
+    providerId: providerIdText,
+    externalTransactionId: idText,
+    playerId: idText,
+    walletId: uuidText,
+    roundId: idText,
+    gameId: idText,
+    kind: z.enum(WagerTransactionKind, { error: UNKNOWN_KIND_MESSAGE }),
+    money: z.unknown(),
+    referenceExternalTransactionId: idText.nullish().transform((value) => value ?? undefined),
+  })
+  .refine((payload) => payload.referenceExternalTransactionId !== payload.externalTransactionId, {
+    path: ['referenceExternalTransactionId'],
+    message: 'must not reference the transaction itself',
+  });
 
 export type WagerTransactionPayload = z.output<typeof wagerTransactionPayloadSchema>;
 
@@ -66,7 +80,11 @@ export const transactionIdParams = z.object({ transactionId: uuidText });
 
 export const externalIdParams = z.object({ providerId: providerIdText, externalTransactionId: idText });
 
-/** Status HTTP da submissão pelo estado decidido; `PENDING` e `FAILED` não saem do caso de uso (erro de programação). */
+/**
+ * Status HTTP da submissão pelo estado decidido. `FAILED` não sai da submissão, mas o replay devolve a linha
+ * persistida, e um worker (T22/T24) pode tê-la marcado como falha permanente: responde o status de
+ * `PERMANENT_FAILURE`, de forma estável. `PENDING` nunca é persistido como resultado (erro de programação).
+ */
 export function httpStatusForTransaction(status: WagerTransactionStatus): number {
   switch (status) {
     case WagerTransactionStatus.Processed:
@@ -75,8 +93,9 @@ export function httpStatusForTransaction(status: WagerTransactionStatus): number
       return 202;
     case WagerTransactionStatus.Rejected:
       return 422;
-    case WagerTransactionStatus.Pending:
     case WagerTransactionStatus.Failed:
+      return HTTP_STATUS_BY_FAILURE_CODE[FailureCode.PermanentFailure];
+    case WagerTransactionStatus.Pending:
       throw new Error('unexpected status from submission');
   }
 }

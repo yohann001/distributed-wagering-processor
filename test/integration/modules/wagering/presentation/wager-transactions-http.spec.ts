@@ -285,6 +285,49 @@ describe('wagering HTTP API (app real + Postgres real)', () => {
       expect(error.message).not.toContain('leak-marker-xyz');
       expect(response.headers.get('x-correlation-id')).toBe('corr-malformed-1');
     });
+
+    it('answers 400 for a reversal that references itself instead of parking it in PENDING_REFERENCE', async () => {
+      const scenario = await openScenario();
+      const externalTransactionId = `self-${Bun.randomUUIDv7()}`;
+
+      const response = await submit<HttpErrorBody>(
+        betPayload(scenario, externalTransactionId, {
+          kind: 'REFUND',
+          referenceExternalTransactionId: externalTransactionId,
+        }),
+        `${scenario.providerId}:${externalTransactionId}`,
+      );
+
+      const error = expectErrorBody(response, 400, FailureCode.InvalidPayload);
+      expect(error.issues?.map((issue) => issue.path)).toEqual(['body.referenceExternalTransactionId']);
+      expect(await storedTransactionCount(externalTransactionId)).toBe(0);
+    });
+
+    it('does not advertise the internal OPENING kind when the kind is unknown', async () => {
+      const scenario = await openScenario();
+
+      const response = await submit<HttpErrorBody>(
+        betPayload(scenario, 'unknown-kind', { kind: 'FOO' }),
+        `${scenario.providerId}:unknown-kind`,
+      );
+
+      const error = expectErrorBody(response, 400, FailureCode.InvalidPayload);
+      expect(error.issues?.[0]?.path).toBe('body.kind');
+      expect(error.issues?.[0]?.message).not.toContain('OPENING');
+    });
+
+    it('replays a resend that sends the reference as null after omitting it, instead of a 409', async () => {
+      const scenario = await openScenario();
+      const key = `${scenario.providerId}:null-ref`;
+      const first = await submit(betPayload(scenario, 'null-ref'), key);
+      expect(first.status).toBe(200);
+
+      const again = await submit(betPayload(scenario, 'null-ref', { referenceExternalTransactionId: null }), key);
+
+      expect(again.status).toBe(200);
+      expect(again.body).toEqual({ ...first.body, idempotentReplay: true });
+      await assertWalletConsistent(orm, scenario.walletId);
+    });
   });
 
   describe('GET /wagering/transactions/:transactionId', () => {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import { ConnectionException, DriverException } from '@mikro-orm/core';
+
 import { isTransientDatabaseFailure } from '../../../../src/infrastructure/database/mikro-orm-unit-of-work';
 import {
   ConcurrencyConflictError,
@@ -29,6 +31,25 @@ describe('isTransientDatabaseFailure', () => {
     error.name = 'KnexTimeoutError';
 
     expect(isTransientDatabaseFailure(error)).toBe(true);
+  });
+
+  it('is true for a pool acquire timeout wrapped by MikroORM, as the read paths receive it', () => {
+    const timeout = new Error(
+      'Knex: Timeout acquiring a connection. The pool is probably full. Are you missing a .transacting(trx) call?',
+    );
+    timeout.name = 'KnexTimeoutError';
+
+    // O `driver.rethrow` do MikroORM embrulha o erro: o `name` vira 'DriverException' e não há `code`.
+    const wrapped = new DriverException(timeout);
+
+    expect(wrapped.name).toBe('DriverException');
+    expect(isTransientDatabaseFailure(wrapped)).toBe(true);
+  });
+
+  it('is true for a MikroORM ConnectionException without a SQLSTATE', () => {
+    expect(isTransientDatabaseFailure(new ConnectionException(new Error('connect ECONNREFUSED 127.0.0.1:5432')))).toBe(
+      true,
+    );
   });
 
   it.each([

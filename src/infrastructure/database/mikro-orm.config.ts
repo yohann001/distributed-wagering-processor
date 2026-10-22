@@ -9,7 +9,9 @@ const migrationsPath = new URL('./migrations', import.meta.url).pathname;
 export function buildMikroOrmConfig(env: Env): Options {
   return defineConfig({
     clientUrl: env.DATABASE_URL,
-    pool: { min: 0, max: env.DATABASE_POOL_MAX },
+    // Sem `acquireTimeoutMillis` o knex espera 60 s por uma conexão livre; com pool cheio a requisição deve
+    // falhar rápido em 503 + `Retry-After` (`isTransientDatabaseFailure`).
+    pool: { min: 0, max: env.DATABASE_POOL_MAX, acquireTimeoutMillis: env.DB_POOL_ACQUIRE_TIMEOUT_MS },
     entities: [...ENTITY_SCHEMAS],
     extensions: [Migrator],
     // As migrations são escritas à mão (o schema da T10 tem constraints e triggers que o metadata não

@@ -246,10 +246,67 @@ describe('wallet HTTP API (app real + Postgres real)', () => {
       expectError(response, 400, FailureCode.InvalidPayload);
     });
 
+    it.each([
+      ['a zero limit', 'limit=0', 'query.limit'],
+      ['a limit above 100', 'limit=101', 'query.limit'],
+      ['a limit with five digits', 'limit=10000', 'query.limit'],
+      ['a cursor that does not decode', 'cursor=abc', 'query.cursor'],
+    ])('reports %s in issues, like every other invalid parameter', async (_name, query, path) => {
+      const wallet = await openWallet('1.00');
+
+      const response = await getJson<HttpErrorBody>(baseUrl, `/wallets/${wallet.id}/ledger?${query}`);
+
+      const error = expectError(response, 400, FailureCode.InvalidPayload);
+      expect(error.issues?.map((issue) => issue.path)).toEqual([path]);
+      if (path === 'query.limit') {
+        expect(error.issues?.[0]?.message).toBe('must be an integer between 1 and 100');
+      }
+    });
+
     it('answers 404 WALLET_NOT_FOUND for an unknown wallet', async () => {
       const response = await getJson<HttpErrorBody>(baseUrl, `/wallets/${Bun.randomUUIDv7()}/ledger`);
 
       expectError(response, 404, FailureCode.WalletNotFound);
+    });
+  });
+
+  describe('request bodies the API does not accept', () => {
+    async function walletCountOf(playerId: string): Promise<number> {
+      const rows = await orm.em
+        .fork()
+        .execute<{ total: string }[]>('select count(*)::text as total from wallets where player_id = ?', [playerId]);
+      return Number(rows[0]?.total);
+    }
+
+    it('answers 413 INVALID_PAYLOAD for a body over the JSON limit and writes nothing', async () => {
+      const playerId = Bun.randomUUIDv7();
+      const body = JSON.stringify({ playerId, initialBalance: brl('1.00'), padding: 'a'.repeat(200_000) });
+
+      const response = await postRaw<HttpErrorBody>(baseUrl, '/wallets', body);
+
+      const error = expectError(response, 413, FailureCode.InvalidPayload);
+      expect(error.action).toBe(FailureAction.FixPayload);
+      expect(await walletCountOf(playerId)).toBe(0);
+    });
+
+    it('answers 415 INVALID_PAYLOAD for an unsupported charset', async () => {
+      const response = await postRaw<HttpErrorBody>(baseUrl, '/wallets', '{}', {
+        'Content-Type': 'application/json; charset=latin9',
+      });
+
+      expectError(response, 415, FailureCode.InvalidPayload);
+    });
+
+    it('does not parse form-urlencoded bodies, so a cross-site form cannot open a funded wallet', async () => {
+      const playerId = Bun.randomUUIDv7();
+      const form = `playerId=${playerId}&initialBalance[amount]=1.00&initialBalance[currency]=BRL`;
+
+      const response = await postRaw<HttpErrorBody>(baseUrl, '/wallets', form, {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      });
+
+      expectError(response, 400, FailureCode.InvalidPayload);
+      expect(await walletCountOf(playerId)).toBe(0);
     });
   });
 
@@ -297,5 +354,60 @@ describe('wallet HTTP API (app real + Postgres real)', () => {
       const error = expectError(response, 404, FailureCode.InvalidPayload);
       expect(error.message).toBe('Route not found');
     });
+  });
+});
+
+describe('wallet HTTP API: connection pool exhausted (app real + Postgres real)', () => {
+  let app: INestApplication;
+  let orm: MikroORM;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    // As factories leem o ambiente ao compilar o módulo: o valor só precisa valer durante o createTestApp.
+    const previous = {
+      poolMax: process.env.DATABASE_POOL_MAX,
+      acquireTimeout: process.env.DB_POOL_ACQUIRE_TIMEOUT_MS,
+    };
+    process.env.DATABASE_POOL_MAX = '1';
+    process.env.DB_POOL_ACQUIRE_TIMEOUT_MS = '300';
+    try {
+      app = await createTestApp();
+    } finally {
+      restoreEnv('DATABASE_POOL_MAX', previous.poolMax);
+      restoreEnv('DB_POOL_ACQUIRE_TIMEOUT_MS', previous.acquireTimeout);
+    }
+    orm = app.get(MikroORM);
+    baseUrl = await app.getUrl();
+  });
+
+  afterAll(async () => {
+    await app?.close();
+  });
+
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
+
+  it('answers a read with 503 TRANSIENT_FAILURE and Retry-After when no connection frees up in time', async () => {
+    const client = orm.em.getConnection().getKnex().client;
+    const held: unknown = await client.acquireConnection();
+
+    let response: HttpResult<HttpErrorBody>;
+    const startedAt = performance.now();
+    try {
+      response = await getJson<HttpErrorBody>(baseUrl, `/wallets/${Bun.randomUUIDv7()}`);
+    } finally {
+      await client.releaseConnection(held);
+    }
+
+    const error = expectError(response, 503, FailureCode.TransientFailure);
+    expect(error.action).toBe(FailureAction.Retry);
+    expect(response.headers.get('retry-after')).toBe('1');
+    // Falha pelo acquire timeout de 300 ms, não pelo padrão de 60 s do knex.
+    expect(performance.now() - startedAt).toBeLessThan(5000);
   });
 });

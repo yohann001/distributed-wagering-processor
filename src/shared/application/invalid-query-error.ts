@@ -7,7 +7,7 @@ export class InvalidQueryError extends DomainError {
 
   constructor(
     readonly field: string,
-    detail: string,
+    readonly detail: string,
   ) {
     super(`Invalid query parameter '${field}': ${detail}`);
   }

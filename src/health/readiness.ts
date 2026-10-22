@@ -23,6 +23,13 @@ export interface ReadinessFailure {
   readonly errorName: string;
 }
 
+export interface ReadinessProbeOptions {
+  /** Por quanto tempo (ms) o último relatório é reaproveitado sem tocar as dependências. Padrão 0: sem cache. */
+  readonly cacheMs?: number;
+  /** Relógio monotônico em ms, injetável nos testes. */
+  readonly now?: () => number;
+}
+
 function rejectOnAbort(signal: AbortSignal): Promise<never> {
   return new Promise<never>((_, reject) => {
     signal.addEventListener('abort', () => reject(signal.reason), { once: true });
@@ -36,15 +43,46 @@ function rejectOnAbort(signal: AbortSignal): Promise<never> {
  * checagem que ignora o `signal` (a query do Postgres), que segue ocupando a conexão até o driver desistir.
  * O relatório nunca carrega mensagem de erro, só `up` ou `down` com o motivo (`timeout` ou `error`); o
  * detalhe vai para o `onFailure` (log), sem corpo nem mensagem.
+ *
+ * A rota é pública e a checagem do Postgres usa o mesmo pool das transações financeiras: chamadas simultâneas
+ * compartilham a rodada em andamento (single-flight) e o resultado vale por `cacheMs`, de modo que uma rajada
+ * de sondas custa uma conexão, não uma por chamada.
  */
 export class ReadinessProbe {
+  private readonly cacheMs: number;
+  private readonly now: () => number;
+  private inFlight: Promise<ReadinessReport> | null = null;
+  private cached: { readonly report: ReadinessReport; readonly at: number } | null = null;
+
   constructor(
     private readonly checks: readonly DependencyCheck[],
     private readonly timeoutMs: number,
     private readonly onFailure: (failure: ReadinessFailure) => void,
-  ) {}
+    options: ReadinessProbeOptions = {},
+  ) {
+    this.cacheMs = options.cacheMs ?? 0;
+    this.now = options.now ?? (() => performance.now());
+  }
 
-  async run(): Promise<ReadinessReport> {
+  run(): Promise<ReadinessReport> {
+    if (this.cached !== null && this.now() - this.cached.at < this.cacheMs) {
+      return Promise.resolve(this.cached.report);
+    }
+    this.inFlight ??= this.runChecks().then(
+      (report) => {
+        this.cached = { report, at: this.now() };
+        this.inFlight = null;
+        return report;
+      },
+      (error: unknown) => {
+        this.inFlight = null;
+        throw error;
+      },
+    );
+    return this.inFlight;
+  }
+
+  private async runChecks(): Promise<ReadinessReport> {
     const results = await Promise.all(
       this.checks.map(async (check): Promise<[DependencyName, DependencyStatus]> => [
         check.name,

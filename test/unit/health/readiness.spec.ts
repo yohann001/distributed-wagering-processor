@@ -98,13 +98,81 @@ describe('ReadinessProbe', () => {
     expect(report.checks.sqs).toEqual({ status: 'down', reason: 'timeout' });
   });
 
-  it('runs the checks in parallel', async () => {
-    const { probe } = probeFor([resolvingAfter('postgres', 40), resolvingAfter('sqs', 40)], 1000);
-    const startedAt = performance.now();
+  it('starts every check before any of them settles', async () => {
+    const started: DependencyName[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gated = (name: DependencyName): DependencyCheck => ({
+      name,
+      check: async () => {
+        started.push(name);
+        await gate;
+      },
+    });
+    const { probe } = probeFor([gated('postgres'), gated('sqs')], 1000);
 
-    const report = await probe.run();
+    const running = probe.run();
+    await Promise.resolve();
 
-    expect(report.status).toBe('ok');
-    expect(performance.now() - startedAt).toBeLessThan(75);
+    // Em série, a segunda checagem só começaria depois que a primeira terminasse.
+    expect(started).toEqual(['postgres', 'sqs']);
+    release();
+    expect((await running).status).toBe('ok');
+  });
+
+  it('shares one in-flight round of checks between concurrent callers', async () => {
+    let calls = 0;
+    const counted: DependencyCheck = {
+      name: 'postgres',
+      check: async () => {
+        calls += 1;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      },
+    };
+    const { probe } = probeFor([counted], 1000);
+
+    const reports = await Promise.all([probe.run(), probe.run(), probe.run()]);
+
+    expect(calls).toBe(1);
+    expect(reports.every((report) => report.status === 'ok')).toBe(true);
+  });
+
+  it('reuses the last report within cacheMs and runs the checks again after it', async () => {
+    let calls = 0;
+    let now = 1_000;
+    const counted: DependencyCheck = {
+      name: 'sqs',
+      check: async () => {
+        calls += 1;
+      },
+    };
+    const probe = new ReadinessProbe([counted], TIMEOUT_MS, () => undefined, { cacheMs: 1000, now: () => now });
+
+    await probe.run();
+    now += 999;
+    await probe.run();
+    expect(calls).toBe(1);
+
+    now += 1;
+    await probe.run();
+    expect(calls).toBe(2);
+  });
+
+  it('runs the checks on every call when cacheMs is zero', async () => {
+    let calls = 0;
+    const counted: DependencyCheck = {
+      name: 'sqs',
+      check: async () => {
+        calls += 1;
+      },
+    };
+    const { probe } = probeFor([counted]);
+
+    await probe.run();
+    await probe.run();
+
+    expect(calls).toBe(2);
   });
 });

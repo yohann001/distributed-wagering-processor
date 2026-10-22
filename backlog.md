@@ -55,7 +55,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §7, §13 (Unidade: regras de `BET`, `WIN`, `LOSS`, `REFUND`, `ROLLBACK`)
 - **Depende de:** T04, T05
 
-### [ ] T07 — Idempotência: JSON canônico e `payloadHash`
+### [x] T07 — Idempotência: JSON canônico e `payloadHash`
 - **Descrição:** Função pura que monta o subconjunto de campos de negócio, serializa em JSON canônico (chaves ordenadas recursivamente, sem header nem metadados de transporte) e calcula o hash (ex.: SHA-256 hex). Default da key `"{providerId}:{externalTransactionId}"`.
 - **Critério de aceite:** mesma carga com chaves em ordem diferente gera o mesmo hash. Qualquer campo de negócio alterado gera hash diferente. Campos de transporte não influenciam. Teste de "mesma key com payload divergente" usando `matchesPayload`. Algoritmo documentado no `ARCHITECTURE.md`.
 - **Seção:** §9 (Idempotência), §6.3, §13 (Unidade: idempotency key com payload divergente)

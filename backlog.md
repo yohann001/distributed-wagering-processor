@@ -111,7 +111,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 3 — Aplicação (casos de uso)
 
-### [ ] T13 — Base de observabilidade (logger, métricas, correlação)
+### [x] T13 — Base de observabilidade (logger, métricas, correlação)
 - **Descrição:** `nestjs-pino` com saída JSON, campos de contexto (`correlationId`, `messageId`, `transactionId`, `walletId`, `providerId`, `instanceId`) e redaction de campos sensíveis/financeiros. Registry `prom-client` exposto em `GET /metrics`. Propagação de `correlationId` (header `X-Correlation-Id` ou gerado; na fila, vindo do envelope).
 - **Critério de aceite:** log de uma requisição sai em JSON com `correlationId`. `GET /metrics` responde no formato Prometheus. Teste garantindo que `money`/payload completo não aparecem no log.
 - **Seção:** §12

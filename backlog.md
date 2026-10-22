@@ -49,7 +49,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §6.3, §7 regras 1 e 6
 - **Depende de:** T01, T02
 
-### [ ] T06 — Política de aplicação de transações (regras BET/WIN/LOSS/REFUND/ROLLBACK)
+### [x] T06 — Política de aplicação de transações (regras BET/WIN/LOSS/REFUND/ROLLBACK)
 - **Descrição:** Serviço de domínio puro que, dada a `Wallet`, a transação e a referência (se houver), decide: aplicar (gera ledger), registrar sem efeito (`LOSS`), rejeitar com `FailureCode` ou aguardar referência. Valida referência do mesmo provider, player, wallet, moeda e rodada, os kinds permitidos (`REFUND`→`BET`; `ROLLBACK`→`BET|WIN|REFUND`), o valor igual ao da referência, a reversão única por tipo e a reversão que deixaria saldo negativo.
 - **Critério de aceite:** testes unitários para cada linha da tabela do §7 e cada regra adicional 1–9. `REJECTED` nunca produz lançamento. `LOSS` nunca produz lançamento.
 - **Seção:** §7, §13 (Unidade: regras de `BET`, `WIN`, `LOSS`, `REFUND`, `ROLLBACK`)

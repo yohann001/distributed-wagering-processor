@@ -106,3 +106,52 @@ Uma transição a partir de estado terminal é erro de programação (`INVARIANT
 - **`reject` só aceita códigos de negócio.** `TRANSIENT_FAILURE` (nada é gravado), `PERMANENT_FAILURE` (vai para `fail`) e `INVARIANT_VIOLATION` (nunca persistido) lançam `InvalidWagerTransactionError`. Pelo mesmo critério, `fail` só aceita `PERMANENT_FAILURE`.
 - **`ledgerDirectionFor(reference?)`:** `BET` → `DEBIT`; `WIN`, `REFUND` e `OPENING` → `CREDIT`; `ROLLBACK` → direção inversa da direção da referência (`BET` → `CREDIT`; `WIN`/`REFUND` → `DEBIT`). Lança `InvalidWagerTransactionError` para `LOSS` (não há lançamento), para `ROLLBACK` sem referência e para `ROLLBACK` de `ROLLBACK`, `LOSS` ou `OPENING`. A política da T06 rejeita esses casos com `INVALID_REFERENCE_KIND` antes de chegar aqui, então a exceção é a última barreira.
 - `createdAt` e `processedAt` são guardados com cópia defensiva, como na `Wallet` e no ledger. `rehydrate` não revalida nada (aceita inclusive `OPENING`).
+
+## Política de aplicação (§7)
+
+`WagerApplicationPolicy` (`src/modules/wagering/domain/wager-application-policy.ts`) é um serviço de domínio puro e sem estado, que implementa as regras de `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK`. Testes: `test/unit/modules/wagering/domain/wager-application-policy.spec.ts`.
+
+- **Entrada e saída.** `apply({ transaction, wallet, reference, reversalsOfReference, ledgerEntryId, at })` recebe tudo já carregado (sem I/O). A transação precisa estar em `PENDING` ou `PENDING_REFERENCE`. A política executa as transições na `Wallet` e na `WagerTransaction` e devolve um resultado. O caso de uso (T16) e o worker de `PENDING_REFERENCE` (T24) só carregam as entradas e persistem o que volta. Ids (`ledgerEntryId`) e tempo (`at`) vêm de quem chama.
+- **Nada é alterado antes da decisão.** Todas as checagens vêm antes de qualquer mutação, então uma rejeição nunca deixa saldo, `version` ou lançamento para trás.
+- **Rejeição de negócio é resultado, não exceção.** Só erros de programação lançam.
+
+### Resultado
+
+| `decision` | Status da transação | Lançamento no ledger |
+|---|---|---|
+| `APPLIED` | `PROCESSED` | 1 (`DEBIT` ou `CREDIT`) |
+| `RECORDED` (`LOSS`) | `PROCESSED` | nenhum, saldo e `version` intactos |
+| `REJECTED` (`failureCode`) | `REJECTED` | nenhum |
+| `AWAITING_REFERENCE` | `PENDING_REFERENCE` | nenhum |
+
+O `decision` é o que o T16 usa para escolher os eventos de integração (T08).
+
+### Ordem das checagens
+
+A primeira que falha decide.
+
+0. Erros de programação, que lançam sem mutar nada: transação terminal (`InvalidTransactionStateError`), `REFUND`/`ROLLBACK` reidratado sem `referenceExternalTransactionId`, wallet que não é a da transação e referência resolvida para outro id externo (`InvalidWagerTransactionError`). A terminal vem primeiro: do contrário a wallet seria movimentada e o `markProcessed` lançaria depois. Um segundo `apply` numa transação já decidida nunca reaplica nada.
+1. Wallet inexistente: `WALLET_NOT_FOUND`.
+2. Wallet de outro player: `WALLET_PLAYER_MISMATCH`.
+3. Wallet de outra moeda: `CURRENCY_MISMATCH`. As rejeições 1 a 3 não expõem saldo (`balanceAfter` indefinido); a partir da 4 a rejeição carrega o saldo da wallet.
+4. Se a transação tem `referenceExternalTransactionId`:
+   1. kind que não referencia nada (`BET`): `INVALID_REFERENCE_KIND`, mesmo que a referência não exista;
+   2. referência não encontrada: `AWAITING_REFERENCE` (regra 8);
+   3. provider, player, wallet, moeda ou rodada diferentes: `REFERENCE_MISMATCH` (regra 2);
+   4. kind da referência fora do permitido (`REFUND` → `BET`; `ROLLBACK` → `BET`/`WIN`/`REFUND`; `WIN` e `LOSS` → `BET`): `INVALID_REFERENCE_KIND` (regra 3);
+   5. referência `PENDING` ou `PENDING_REFERENCE`: `AWAITING_REFERENCE`; referência `REJECTED` ou `FAILED`: `REFERENCE_NOT_PROCESSED`;
+   6. só `REFUND`/`ROLLBACK`: valor diferente do da referência: `REFERENCE_AMOUNT_MISMATCH` (regra 5);
+   7. só `REFUND`/`ROLLBACK`: reversão já feita: `ALREADY_REVERSED` (regra 4).
+5. `LOSS`: `PROCESSED` com o saldo atual, sem lançamento.
+6. Débito sem saldo: `REVERSAL_INSUFFICIENT_FUNDS` para `ROLLBACK`, `INSUFFICIENT_FUNDS` para `BET` (regra 9). Crédito nunca depende de saldo.
+7. Lançamento via `Wallet.debit`/`credit` e `markProcessed` com o saldo resultante. A direção vem de `ledgerDirectionFor` (o `ROLLBACK` inverte a da referência).
+
+### Interpretações adotadas
+
+- **Referência ainda em `PENDING` ou `PENDING_REFERENCE` espera.** Ela ainda pode ser processada, então a transação vira `PENDING_REFERENCE` e o worker reavalia. Referência que terminou `REJECTED`/`FAILED` não tem efeito a reverter: `REFERENCE_NOT_PROCESSED`, sem espera.
+- **Moeda da referência diferente da da transação é `REFERENCE_MISMATCH`.** `CURRENCY_MISMATCH` fica para a moeda da wallet.
+- **`WIN` e `LOSS` com referência** (o §7 diz que o `WIN` "pode referenciar" a `BET`) passam pelas checagens 4.2 a 4.5 (existência, origem, kind e status da referência) e pulam valor e reversão: o prêmio não precisa ter o valor da aposta, e uma `BET` já estornada não impede o registro do resultado. A referência resolvida é gravada em `referenceTransactionId`. Sem `referenceExternalTransactionId`, qualquer referência entregue é ignorada.
+- **`BET` com `referenceExternalTransactionId` é rejeitada com `INVALID_REFERENCE_KIND`,** antes de procurar a referência: uma aposta não aponta nenhuma transação.
+- **Reversão única, mais estrita que a letra do §7 regra 4.** Numa `BET`, `REFUND` e `ROLLBACK` se excluem: qualquer um dos dois em `PROCESSED` bloqueia o outro, porque os dois creditam o valor da aposta e a regra "por tipo" permitiria crédito em dobro, o que o §3 proíbe. Em referência `WIN` ou `REFUND` só um segundo `ROLLBACK` é bloqueado. Reversões `REJECTED` e os `WIN`/`LOSS` que apontam a `BET` nunca bloqueiam. A política ignora a própria transação na lista recebida.
+- **Fora do escopo desta política:** o lookup de idempotência e o replay (T07/T16), a resolução da referência e a listagem das reversões (I/O no T16), o esgotamento de `PENDING_REFERENCE` (`REFERENCE_NOT_FOUND`, T24, que chama `reject` direto) e os eventos (T08/T16).
+- **Nota para o T10:** o índice único parcial por tipo de reversão não cobre a exclusão entre `REFUND` e `ROLLBACK` da mesma `BET`. Para que a garantia valha sob concorrência entre instâncias (§5.9), o schema precisa de uma guarda adicional (por exemplo, um índice único parcial sobre `referenceTransactionId` das reversões `PROCESSED` de `BET`). Nenhum trabalho de schema foi feito aqui.

@@ -43,7 +43,7 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 
 ### Hierarquia de erros
 
-`DomainError` é abstrata e expõe `code: FailureCode` e `action: FailureAction`. As subclasses atuais são `InvalidMoneyError`, `CurrencyMismatchError` e `InvalidTransactionStateError`. Regras de negócio não lançam exceção para o controller: viram `REJECTED` com o código correspondente. O mapeamento para HTTP (T19) e para ack, retry e DLQ (T22) parte desta classificação.
+`DomainError` é abstrata e expõe `code: FailureCode` e `action: FailureAction`. As subclasses atuais são `InvalidMoneyError`, `CurrencyMismatchError`, `InvalidTransactionStateError`, `InvalidLedgerEntryError`, `InsufficientFundsError` e `InvalidWalletOpeningError`. Regras de negócio não lançam exceção para o controller: viram `REJECTED` com o código correspondente. O mapeamento para HTTP (T19) e para ack, retry e DLQ (T22) parte desta classificação.
 
 ## Lançamento de ledger (§6.4)
 
@@ -54,3 +54,13 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 - **Erro `InvalidLedgerEntryError` com `INVARIANT_VIOLATION`, e não `CURRENCY_MISMATCH`.** Quem cria lançamentos é a `Wallet`, nunca o cliente. Um lançamento inválido é bug, não payload errado. A moeda errada vinda do cliente é barrada antes, pela `Wallet`, com `CurrencyMismatchError`.
 - **`createdAt` com cópia defensiva.** `Date` é mutável mesmo atrás de `readonly`, por isso a entidade guarda uma cópia e o getter também devolve uma cópia. É a única diferença em relação ao esqueleto do §6.4, que expõe `public readonly createdAt: Date`.
 - As mesmas regras serão repetidas no schema (T10: `CHECK` de aritmética e de sinal, trigger contra `UPDATE`/`DELETE`), conforme §5.9.
+
+## Aggregate Wallet (§6.2)
+
+`Wallet` (`src/modules/wallet/domain/wallet.ts`) é a única porta de entrada para alterar saldo. Testes: `test/unit/modules/wallet/domain/wallet.spec.ts`.
+
+- **Saldo e ledger consistentes por construção.** `debit`/`credit` montam primeiro o `WalletLedgerEntry` (que valida a aritmética) e só então aplicam `balance = entry.balanceAfter`, `version + 1` e `updatedAt`. Toda validação (moeda, saldo, valor positivo) acontece antes da mutação: um erro deixa saldo, `version` e `updatedAt` intactos. Não existe caminho que altere o saldo sem devolver um lançamento.
+- **Abertura com `version 1`, inclusive com saldo inicial.** O contrato de `POST /wallets` (§9) devolve `version: 1` para uma wallet aberta com `1000.00`, e o saldo inicial gera um `CREDIT` da transação `OPENING`. Por isso `open` recebe os ids da transação `OPENING` e do lançamento e devolve `{ wallet, openingEntry }`: a abertura é o estado inicial e não conta como incremento. Saldo zero não gera lançamento. `opening` ausente com saldo positivo, ou presente com saldo zero, é `InvalidWalletOpeningError` (`INVARIANT_VIOLATION`), porque indica bug no caso de uso.
+- **Ids e tempo vêm de quem chama** (portas `IdGenerator` e `Clock`). O domínio não gera id nem lê o relógio.
+- **Saldo insuficiente lança `InsufficientFundsError`, e `canDebit` permite decidir antes.** A `Wallet` não sabe se o débito é uma aposta ou uma reversão. A política de aplicação (T06) consulta `canDebit` e escolhe o `failureCode`: `INSUFFICIENT_FUNDS` para `BET`, `REVERSAL_INSUFFICIENT_FUNDS` para `ROLLBACK` de `WIN`/`REFUND`. A rejeição de negócio vira `REJECTED` persistido. A exceção da `Wallet` é a última barreira, não o fluxo normal. A mensagem do erro só cita o `walletId`, nunca valores (§12).
+- **`version` é o contador de alterações de saldo** e será usado no controle de concorrência (T13). O domínio só garante que ele incrementa exatamente uma vez por lançamento. `rehydrate` não revalida e continua a partir da `version` persistida.

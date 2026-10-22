@@ -37,7 +37,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §6.4
 - **Depende de:** T01, T02
 
-### [ ] T04 — Aggregate `Wallet`
+### [x] T04 — Aggregate `Wallet`
 - **Descrição:** `open` (version 1, saldo inicial), `rehydrate`, `debit`/`credit` que alteram o saldo e devolvem o `WalletLedgerEntry` correspondente, garantindo que saldo e ledger são consistentes por construção. `version` incrementa somente quando o saldo muda. Saldo nunca negativo. Moeda da operação igual à da wallet.
 - **Critério de aceite:** testes unitários para débito com saldo insuficiente (não muda estado nem version), débito/crédito válidos (version +1, entrada correta), conflito de moeda, saldo inicial zero e `rehydrate`.
 - **Seção:** §6.2, §13 (Unidade: invariantes da `Wallet`, conflito de moeda)

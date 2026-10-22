@@ -77,7 +77,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 2 — Persistência e schema
 
-### [ ] T10 — Schema e migrations iniciais com constraints
+### [x] T10 — Schema e migrations iniciais com constraints
 - **Descrição:** Migrations versionadas e reversíveis para `wallets`, `wager_transactions`, `wallet_ledger_entries`, `inbox_messages` e `outbox_messages`. Valores em `numeric(18,2)`, o mesmo teto de 16 dígitos inteiros que o `Money` valida. Garantias aplicadas no banco:
   - `CHECK (balance >= 0)` e `CHECK (version >= 1)`;
   - `UNIQUE (player_id, currency)`;

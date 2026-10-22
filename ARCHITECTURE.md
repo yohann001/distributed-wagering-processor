@@ -165,7 +165,7 @@ A primeira que falha decide.
 - **`BET` com `referenceExternalTransactionId` é rejeitada com `INVALID_REFERENCE_KIND`,** antes de procurar a referência: uma aposta não aponta nenhuma transação.
 - **Reversão única, mais estrita que a letra do §7 regra 4.** Numa `BET`, `REFUND` e `ROLLBACK` se excluem: qualquer um dos dois em `PROCESSED` bloqueia o outro, porque os dois creditam o valor da aposta e a regra "por tipo" permitiria crédito em dobro, o que o §3 proíbe. Em referência `WIN` ou `REFUND` só um segundo `ROLLBACK` é bloqueado. Reversões `REJECTED` e os `WIN`/`LOSS` que apontam a `BET` nunca bloqueiam. A política ignora a própria transação na lista recebida e também os itens que não apontam para a referência (`referenceTransactionId` diferente do id dela).
 - **Fora do escopo desta política:** o lookup de idempotência e o replay (T07/T16), a resolução da referência e a listagem das reversões (I/O no T16), o esgotamento de `PENDING_REFERENCE` (`REFERENCE_NOT_FOUND`, T24, que chama `reject` direto) e os eventos (T08/T16).
-- **Nota para o T10:** um índice único parcial por tipo de reversão não cobre a exclusão entre `REFUND` e `ROLLBACK` da mesma `BET`. Basta um índice só, `UNIQUE (reference_transaction_id) WHERE kind IN ('REFUND','ROLLBACK') AND status = 'PROCESSED'`: como `REFUND` só aponta `BET` e só `ROLLBACK` aponta `WIN`/`REFUND`, ele reproduz exatamente a regra desta política sob concorrência entre instâncias (§5.9). Nenhum trabalho de schema foi feito aqui.
+- **Nota para o T10:** um índice único parcial por tipo de reversão não cobre a exclusão entre `REFUND` e `ROLLBACK` da mesma `BET`. Basta um índice só, `UNIQUE (reference_transaction_id) WHERE kind IN ('REFUND','ROLLBACK') AND status = 'PROCESSED'`: como `REFUND` só aponta `BET` e só `ROLLBACK` aponta `WIN`/`REFUND`, ele reproduz exatamente a regra desta política sob concorrência entre instâncias (§5.9). Nenhum trabalho de schema foi feito aqui. Implementado na T10 (`wager_transactions_single_reversal_uq`).
 
 ## Idempotência: `payloadHash` (§9)
 
@@ -214,3 +214,67 @@ Entidades puras de domínio, sem I/O: `InboxMessage` em `src/modules/messaging/d
 - **Sem limite de tentativas na outbox.** Evento confirmado nunca é descartado (§3, §11): a outbox tenta para sempre no teto de 60 s. Não existe estado "morto" nela.
 - **`ExponentialBackoff` em `shared/domain`.** Reutilizável pelo worker de `PENDING_REFERENCE` (T24), que terá o próprio limite de tentativas.
 - **Fora do escopo.** Colunas, índices e migrations de `inbox_messages`/`outbox_messages` (T10); mapeamento ORM e repositórios (T11); publisher, claim com `FOR UPDATE SKIP LOCKED`, `MessageGroupId` e métricas de tentativas/atraso (T23, T25); consumer SQS, fluxo de deduplicação e DLQ (T22); worker de `PENDING_REFERENCE` (T24); valores do backoff configuráveis por env (a T23 pode ligar `DEFAULT_OUTBOX_BACKOFF` ao ambiente); checagem de ordem entre relógios (`processedAt >= receivedAt`, `publishedAt >= occurredAt`), porque o publisher roda em outras instâncias e há defasagem possível.
+
+## Schema e constraints (§5.9)
+
+Migration `src/infrastructure/database/migrations/Migration20261022021041_initial_schema.ts` (reversível: `down()` apaga tudo o que `up()` cria, na ordem inversa). Toda constraint, índice, trigger e função tem nome explícito; os testes da T12 verificam por nome e SQLSTATE.
+
+| Nome | Tabela | Regra | Invariante protegida | § |
+|---|---|---|---|---|
+| `*_pkey` (`wallets`, `wager_transactions`, `wallet_ledger_entries`, `outbox_messages`) | todas menos `inbox_messages` | PK `uuid` (UUIDv7) | Identidade única; o `id` da outbox é o `eventId` | §6.5 |
+| `wallets_balance_non_negative` | `wallets` | `CHECK (balance >= 0)` | Saldo nunca negativo, mesmo sob race | §3, §5.9, §6.2 |
+| `wallets_version_positive` | `wallets` | `CHECK (version >= 1)` | `version` começa em 1 | §6.2 |
+| `wallets_currency_iso` | `wallets` | `CHECK (currency ~ '^[A-Z]{3}$')` | Mesma regex do `Money` (ISO-4217, três maiúsculas) | §6.1 |
+| `wallets_player_currency_uq` | `wallets` | `UNIQUE (player_id, currency)` | No máximo uma wallet por `playerId + currency` | §6.2 |
+| `wallets_id_currency_uq` | `wallets` | `UNIQUE (id, currency)` | Alvo da FK composta do ledger (moeda do lançamento = moeda da wallet) | §6.4 |
+| `wager_transactions_provider_external_uq` | `wager_transactions` | `UNIQUE (provider_id, external_transaction_id)` | Mesma transação do provedor nunca entra duas vezes | §6.3, §9 |
+| `wager_transactions_provider_idempotency_uq` | `wager_transactions` | `UNIQUE (provider_id, idempotency_key)` | Idempotência por provedor: a key nunca é global | §6.3, §9 |
+| `wager_transactions_id_wallet_currency_uq` | `wager_transactions` | `UNIQUE (id, wallet_id, currency)` | Alvo da FK composta do ledger (wallet e moeda da transação) | §6.4 |
+| `wager_transactions_kind_valid` | `wager_transactions` | `kind IN (OPENING, BET, WIN, LOSS, REFUND, ROLLBACK)` | Só tipos conhecidos | §6.3 |
+| `wager_transactions_status_valid` | `wager_transactions` | `status IN (PENDING, PENDING_REFERENCE, PROCESSED, REJECTED, FAILED)` | Só estados da máquina de estados | §6.3 |
+| `wager_transactions_opening_processed` | `wager_transactions` | `kind <> 'OPENING' OR status = 'PROCESSED'` | `OPENING` é interno e nasce `PROCESSED` | §6.3 |
+| `wager_transactions_currency_iso` | `wager_transactions` | `CHECK (currency ~ '^[A-Z]{3}$')` | Moeda no formato do `Money` | §6.1 |
+| `wager_transactions_amount_valid` | `wager_transactions` | `amount > 0 OR (kind = 'LOSS' AND amount = 0)` | Espelha `create`: valor positivo, e `LOSS` pode ser `0.00` | §6.3 |
+| `wager_transactions_balance_after_non_negative` | `wager_transactions` | `balance_after IS NULL OR balance_after >= 0` | O saldo observado nunca é negativo | §3, §6.3 |
+| `wager_transactions_reversal_requires_reference` | `wager_transactions` | `kind NOT IN (REFUND, ROLLBACK) OR reference_external_transaction_id IS NOT NULL` | Reversão sempre aponta uma referência | §7 regra 1 |
+| `wager_transactions_pending_reference_has_reference` | `wager_transactions` | `status <> 'PENDING_REFERENCE' OR reference_external_transaction_id IS NOT NULL` | Só espera referência quem tem referência | §7 regra 8 |
+| `wager_transactions_processed_complete` | `wager_transactions` | `status <> 'PROCESSED' OR (processed_at IS NOT NULL AND balance_after IS NOT NULL)` | O replay devolve o saldo observado (`PROCESSED` sempre tem os dois) | §7 regra 7 |
+| `wager_transactions_processed_reversal_resolved` | `wager_transactions` | `status <> 'PROCESSED' OR kind NOT IN (REFUND, ROLLBACK) OR reference_transaction_id IS NOT NULL` | Reversão processada tem a referência resolvida, o que alimenta o índice de reversão única | §7 regra 4 |
+| `wager_transactions_failure_code_by_status` | `wager_transactions` | `(status IN ('REJECTED','FAILED')) = (failure_code IS NOT NULL)` | `failureCode` presente exatamente nos estados de falha | §6.3, §7.2 |
+| `wager_transactions_failed_permanent` | `wager_transactions` | `status <> 'FAILED' OR failure_code = 'PERMANENT_FAILURE'` | `fail` só aceita `PERMANENT_FAILURE` | §6.3 |
+| `wager_transactions_reference_not_self` | `wager_transactions` | `reference_transaction_id IS NULL OR reference_transaction_id <> id` | Transação não referencia a si mesma | §7 |
+| `wager_transactions_reference_fk` | `wager_transactions` | `FOREIGN KEY (reference_transaction_id) REFERENCES wager_transactions (id)`, `DEFERRABLE INITIALLY DEFERRED` | A referência resolvida existe | §7 regra 2 |
+| `wager_transactions_single_reversal_uq` | `wager_transactions` | `UNIQUE (reference_transaction_id) WHERE kind IN ('REFUND','ROLLBACK') AND status = 'PROCESSED'` | Reversão única por referência e exclusão `REFUND`/`ROLLBACK` da mesma `BET`, mesmo entre instâncias (decisão da T06) | §5.9, §7 regra 4 |
+| `wager_transactions_pending_reference_idx` | `wager_transactions` | índice `(created_at, id) WHERE status = 'PENDING_REFERENCE'` | O worker acha as pendentes sem varrer a tabela (T24) | §7.1 |
+| `wager_transactions_reference_lookup_idx` | `wager_transactions` | índice `(provider_id, reference_external_transaction_id) WHERE reference_external_transaction_id IS NOT NULL` | Listar reversões de uma referência (T16) e acordar dependentes quando a referência chega (T24) | §7 regra 2, §7.1 |
+| `wager_transactions_guard` + `wager_transactions_guard_change()` | `wager_transactions` | trigger `BEFORE UPDATE OR DELETE` por linha | Estado terminal não muda, colunas de identidade não mudam, linha nunca é apagada | §6.3 |
+| `wager_transactions_no_truncate` | `wager_transactions` | trigger `BEFORE TRUNCATE` | Idem, para `TRUNCATE` | §6.3 |
+| `wallet_ledger_entries_transaction_wallet_uq` | `wallet_ledger_entries` | `UNIQUE (transaction_id, wallet_id)` | No máximo um lançamento por transação por wallet: sem débito ou crédito duplicado | §3, §6.4 |
+| `wallet_ledger_entries_wallet_seq_uq` | `wallet_ledger_entries` | `UNIQUE (wallet_id, seq)` | Ordem total do ledger por wallet, para paginação (T14) e para a cadeia de `assertWalletConsistent` (T12) | §6.4 |
+| `wallet_ledger_entries_direction_valid` | `wallet_ledger_entries` | `direction IN ('DEBIT','CREDIT')` | Só as duas direções | §6.4 |
+| `wallet_ledger_entries_amount_positive` | `wallet_ledger_entries` | `CHECK (amount > 0)` | Lançamento de valor zero não existe | §6.4 |
+| `wallet_ledger_entries_balances_non_negative` | `wallet_ledger_entries` | `balance_before >= 0 AND balance_after >= 0` | A cadeia de saldos nunca passa por valor negativo | §3, §6.4 |
+| `wallet_ledger_entries_balanced` | `wallet_ledger_entries` | `DEBIT: balance_after = balance_before - amount`; `CREDIT: balance_after = balance_before + amount` | Aritmética do lançamento, validada também na factory | §6.4 |
+| `wallet_ledger_entries_wallet_fk` | `wallet_ledger_entries` | `FOREIGN KEY (wallet_id, currency) REFERENCES wallets (id, currency)`, `DEFERRABLE INITIALLY DEFERRED` | O lançamento pertence a uma wallet existente, na moeda dela | §6.4 |
+| `wallet_ledger_entries_transaction_fk` | `wallet_ledger_entries` | `FOREIGN KEY (transaction_id, wallet_id, currency) REFERENCES wager_transactions (id, wallet_id, currency)`, `DEFERRABLE INITIALLY DEFERRED` | O lançamento pertence a uma transação existente, da mesma wallet e moeda | §6.4 |
+| `wallet_ledger_entries_append_only` + `wallet_ledger_entries_reject_change()` | `wallet_ledger_entries` | trigger `BEFORE UPDATE OR DELETE` por linha | Ledger nunca é sobrescrito nem apagado | §5.5, §6.4 |
+| `wallet_ledger_entries_no_truncate` | `wallet_ledger_entries` | trigger `BEFORE TRUNCATE` | Idem, para `TRUNCATE` | §5.5 |
+| `inbox_messages_pkey` | `inbox_messages` | `PRIMARY KEY (consumer_name, message_id)` | Deduplicação de mensagens por consumidor | §6.5 |
+| `outbox_messages_attempts_non_negative` | `outbox_messages` | `CHECK (attempts >= 0)` | Contador de tentativas coerente | §6.5 |
+| `outbox_messages_pending_idx` | `outbox_messages` | índice `(next_attempt_at) WHERE published_at IS NULL` | O publisher acha as pendentes devidas sem varrer as publicadas | §6.5, §11 |
+
+### Decisões
+
+- **`numeric(18,2)` em todo valor monetário.** É o teto do `Money` (16 inteiros mais 2 casas): nada que o domínio aceite estoura a coluna, e nada que a coluna aceite o domínio recusa. O driver devolve `numeric` como string, então não há `number` no caminho.
+- **`integer` para `version` e `attempts`.** O driver devolve `bigint` como string, que vazaria para o `number` do domínio. Um `integer` (até 2^31 − 1) cobre com folga qualquer contador por wallet ou por mensagem.
+- **`outbox_messages.payload` é `json`, não `jsonb`.** O `json` guarda o texto como foi enviado e preserva a ordem fixa das chaves do envelope (`eventId, eventType, aggregateId, ...`) até a fila. O `jsonb` reordenaria as chaves. Ninguém consulta dentro do payload, então o `jsonb` não traria ganho.
+- **`seq bigint generated always as identity` no ledger.** Existe só na persistência (não está no domínio). Dá uma ordem total e estável dentro da wallet para a paginação do extrato (T14) e para a cadeia de saldos da reconciliação (T12). `created_at` não serve: vem do relógio da aplicação e pode empatar ou voltar entre instâncias. `generated always` impede que a aplicação grave um `seq` à mão. A ordem de commit só é garantida se o caso de uso (T13/T16) travar a linha da wallet (o `UPDATE` com checagem de `version`) **antes** de inserir o lançamento: assim duas movimentações da mesma wallet nunca obtêm `seq` fora da ordem em que commitam.
+- **FKs `DEFERRABLE INITIALLY DEFERRED`.** Verificadas no `COMMIT`. Inbox, transação, saldo, ledger e outbox vão na mesma transação SQL (§6.5, §11), e a ordem de flush do MikroORM (T11, colunas escalares sem relações) nunca pode quebrar uma FK.
+- **Sem FK de `wager_transactions.wallet_id` para `wallets`.** Uma transação `REJECTED` com `WALLET_NOT_FOUND` é persistida com um `walletId` que não existe. Consequência para a T19/T22: a borda precisa validar `walletId` como UUID (`INVALID_PAYLOAD`), porque a coluna é `uuid` e um texto qualquer estouraria no banco.
+- **Uma coluna `currency` só no ledger.** `money`, `balance_before` e `balance_after` ficam na mesma moeda por construção (o domínio exige "mesma moeda nos três valores").
+- **FKs compostas para consistência de moeda e wallet.** `(wallet_id, currency)` garante a moeda da wallet, e `(transaction_id, wallet_id, currency)` garante que o lançamento é da wallet e da moeda da transação. Por isso `wallets` e `wager_transactions` têm as `UNIQUE` extras que servem de alvo.
+- **O trigger do ledger também bloqueia `TRUNCATE`,** com errcode `restrict_violation` (SQLSTATE `23001`). A sonda feita com `set local session_replication_role = replica` (exige superuser) **contorna** o trigger e o `TRUNCATE` passa. Nota para o reset de banco dos testes (T12): ele pode usar esse caminho em vez de `DROP`/`TRUNCATE` normal, mas isso nunca deve existir em código de produção.
+- **Trigger de estado terminal em `wager_transactions`.** Bloqueia `UPDATE` a partir de `PROCESSED`/`REJECTED`/`FAILED`, `UPDATE` de colunas de identidade (`id`, `provider_id`, `external_transaction_id`, `idempotency_key`, `payload_hash`, `wallet_id`, `player_id`, `round_id`, `game_id`, `kind`, `amount`, `currency`, `reference_external_transaction_id`, `created_at`) e `DELETE`. É a versão em SQL de §6.3 ("terminal é terminal"), para o caso de outro caminho de código (ou um operador) tentar. As mensagens citam só id, status e operação, nunca valores (§12). O `TRUNCATE` de `wager_transactions` já é barrado antes pela FK do ledger (`0A000`); o trigger fica como segunda barreira.
+- **`failure_code` não tem `CHECK` de valores.** Seria a terceira cópia da lista (`PERSISTED_REJECTION_CODES` e a tabela de códigos acima). O banco só confere presença por estado e `PERMANENT_FAILURE` em `FAILED`.
+- **`player_id`, `provider_id` e ids externos são `text` sem limite de tamanho.** O limite é da borda (zod, T19).
+- **Fora do escopo.** Mapeamento ORM e repositórios (T11), testes das constraints e do roundtrip da migration (T12), colunas de retry do `PENDING_REFERENCE` (T24, em migration própria), rodar migrations no boot ou na imagem Docker.

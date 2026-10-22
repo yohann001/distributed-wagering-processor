@@ -4,8 +4,8 @@ import type { FailureCode } from '../../../../shared/domain/failure-code';
 import { Money } from '../../../../shared/domain/money';
 import {
   WagerTransaction,
+  WagerTransactionStatus,
   type WagerTransactionKind,
-  type WagerTransactionStatus,
 } from '../../domain/wager-transaction';
 
 // Row + mapper em vez de mapear a classe de domínio direto (§6.1): o estado mutável é `private _campo`
@@ -34,6 +34,9 @@ export interface WagerTransactionRow {
   balanceAfter: string | null;
   processedAt: Date | null;
   createdAt: Date;
+  /** Só na persistência (estado de retry do worker, §7.1), como o `seq` do ledger: o domínio não o conhece. */
+  referenceAttempts: number;
+  nextReferenceAttemptAt: Date | null;
 }
 
 export const WagerTransactionSchema = new EntitySchema<WagerTransactionRow>({
@@ -59,6 +62,8 @@ export const WagerTransactionSchema = new EntitySchema<WagerTransactionRow>({
     balanceAfter: { type: 'decimal', precision: 18, scale: 2, nullable: true },
     processedAt: { type: 'datetime', columnType: 'timestamptz', nullable: true },
     createdAt: { type: 'datetime', columnType: 'timestamptz' },
+    referenceAttempts: { type: 'integer', default: 0 },
+    nextReferenceAttemptAt: { type: 'datetime', columnType: 'timestamptz', nullable: true },
   },
 });
 
@@ -83,6 +88,9 @@ export function wagerTransactionToRow(tx: WagerTransaction): WagerTransactionRow
     balanceAfter: tx.balanceAfter?.toJSON().amount ?? null,
     processedAt: tx.processedAt ?? null,
     createdAt: tx.createdAt,
+    referenceAttempts: 0,
+    // A primeira reavaliação vence na hora: o intervalo de polling do worker é o primeiro atraso.
+    nextReferenceAttemptAt: tx.status === WagerTransactionStatus.PendingReference ? tx.createdAt : null,
   };
 }
 

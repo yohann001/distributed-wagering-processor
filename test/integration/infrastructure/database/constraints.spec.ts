@@ -42,6 +42,8 @@ interface TransactionRow {
   balanceAfter: string | null;
   processedAt: Date | null;
   createdAt: Date;
+  referenceAttempts: number;
+  nextReferenceAttemptAt: Date | null;
 }
 
 interface LedgerRow {
@@ -130,6 +132,8 @@ async function insertTransaction(
     balanceAfter: null,
     processedAt: null,
     createdAt: NOW,
+    referenceAttempts: 0,
+    nextReferenceAttemptAt: null,
     ...overrides,
   };
   await insertInto(em, 'wager_transactions', row);
@@ -430,9 +434,45 @@ describe('schema constraints and triggers (Postgres real)', () => {
 
     it('rejects PENDING_REFERENCE without a reference', async () => {
       await expectDbError(
-        commit((em) => insertTransaction(em, { status: 'PENDING_REFERENCE', referenceExternalTransactionId: null })),
+        commit((em) =>
+          insertTransaction(em, {
+            status: 'PENDING_REFERENCE',
+            referenceExternalTransactionId: null,
+            nextReferenceAttemptAt: NOW,
+          }),
+        ),
         { code: '23514', constraint: 'wager_transactions_pending_reference_has_reference' },
       );
+    });
+
+    it('rejects PENDING_REFERENCE without the next reevaluation scheduled', async () => {
+      await expectDbError(
+        commit((em) =>
+          insertTransaction(em, {
+            kind: 'REFUND',
+            status: 'PENDING_REFERENCE',
+            referenceExternalTransactionId: 'ext-bet',
+            nextReferenceAttemptAt: null,
+          }),
+        ),
+        { code: '23514', constraint: 'wager_transactions_pending_reference_scheduled' },
+      );
+    });
+
+    it('rejects a negative reference_attempts', async () => {
+      const pending = await commit((em) =>
+        insertTransaction(em, {
+          kind: 'REFUND',
+          status: 'PENDING_REFERENCE',
+          referenceExternalTransactionId: 'ext-bet',
+          nextReferenceAttemptAt: NOW,
+        }),
+      );
+
+      await expectDbError(run('update wager_transactions set reference_attempts = -1 where id = ?', [pending.id]), {
+        code: '23514',
+        constraint: 'wager_transactions_reference_attempts_non_negative',
+      });
     });
 
     it('rejects PROCESSED without processed_at or without balance_after', async () => {

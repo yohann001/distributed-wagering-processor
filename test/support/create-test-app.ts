@@ -25,6 +25,11 @@ import {
   sqsConsumerOptionsFromEnv,
   type SqsConsumerOptions,
 } from '../../src/modules/messaging/infrastructure/sqs/sqs-consumer-options';
+import {
+  PENDING_REFERENCE_WORKER_OPTIONS,
+  pendingReferenceWorkerOptionsFromEnv,
+  type PendingReferenceWorkerOptions,
+} from '../../src/modules/wagering/infrastructure/pending-reference/pending-reference-worker-options';
 import { ProviderIdentityPort } from '../../src/shared/application/provider-identity';
 import { UnitOfWork } from '../../src/shared/application/unit-of-work';
 
@@ -47,6 +52,12 @@ export interface CreateTestAppOptions {
    * suítes conferem linhas pendentes da outbox e um worker rodando as publicaria.
    */
   outboxPublisher?: Partial<Omit<OutboxPublisherOptions, 'enabled'>>;
+  /**
+   * Opções do worker de PENDING_REFERENCE por cima das do ambiente. Sem ele o worker fica desligado (as outras suítes
+   * deixam linhas PENDING_REFERENCE e um worker rodando as resolveria). Presente, liga o worker, salvo `enabled: false`:
+   * assim um teste ajusta limite e backoff do caso de uso e o chama um ciclo por vez.
+   */
+  pendingReferenceWorker?: Partial<PendingReferenceWorkerOptions>;
   /** Opções do `UnitOfWork` por cima das do ambiente (ex.: `lockTimeoutMs` curto). O adapter continua o real. */
   unitOfWork?: Partial<UnitOfWorkOptions>;
 }
@@ -77,6 +88,14 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
       options.outboxPublisher === undefined
         ? { ...publisherOptions, enabled: false }
         : { ...publisherOptions, ...options.outboxPublisher, enabled: true },
+    );
+  const pendingReferenceOptions = pendingReferenceWorkerOptionsFromEnv(loadEnv());
+  builder
+    .overrideProvider(PENDING_REFERENCE_WORKER_OPTIONS)
+    .useValue(
+      options.pendingReferenceWorker === undefined
+        ? { ...pendingReferenceOptions, enabled: false }
+        : { ...pendingReferenceOptions, enabled: true, ...options.pendingReferenceWorker },
     );
   if (options.unitOfWork !== undefined) {
     const overrides = options.unitOfWork;

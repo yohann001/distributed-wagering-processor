@@ -9,21 +9,9 @@ import {
   InboxMessageAlreadyExistsError,
   InboxMessageConflictError,
 } from '../../messaging/domain/inbox-message';
-import { OutboxMessage } from '../../messaging/domain/outbox-message';
 import type { WalletLedgerRepository } from '../../wallet/application/wallet-ledger-repository';
 import type { WalletRepository } from '../../wallet/application/wallet-repository';
-import type { Wallet } from '../../wallet/domain/wallet';
-import { WalletBalanceChanged } from '../../wallet/domain/wallet-balance-changed';
-import {
-  WagerDecision,
-  type WagerApplicationOutcome,
-  type WagerApplicationPolicy,
-} from '../domain/wager-application-policy';
-import {
-  WagerTransactionPendingReference,
-  WagerTransactionProcessed,
-  WagerTransactionRejected,
-} from '../domain/wager-transaction-events';
+import type { WagerApplicationPolicy } from '../domain/wager-application-policy';
 import {
   IdempotencyConflictError,
   WagerTransaction,
@@ -31,6 +19,7 @@ import {
   type WagerTransactionKind,
 } from '../domain/wager-transaction';
 import { wagerPayloadHash } from './payload-hash';
+import { enqueueWagerOutcomeEvents } from './wager-outcome-events';
 import type { WagerTransactionRepository } from './wager-transaction-repository';
 
 export interface InboxEntry {
@@ -59,12 +48,6 @@ export interface SubmitWagerTransactionResult {
   /** Estado decidido: PROCESSED, REJECTED ou PENDING_REFERENCE. `balanceAfter` é o saldo observado na decisão. */
   transaction: WagerTransaction;
   idempotentReplay: boolean;
-}
-
-interface EventContext {
-  correlationId: string;
-  causationId: string | undefined;
-  occurredAt: Date;
 }
 
 /**
@@ -192,7 +175,7 @@ export class SubmitWagerTransaction {
       await this.ledger.append(outcome.ledgerEntry);
     }
     await this.recordInbox(command, payloadHash, now);
-    await this.enqueueEvents(transaction, outcome, wallet, {
+    await enqueueWagerOutcomeEvents(this.outbox, this.ids, transaction, outcome, wallet, {
       correlationId: command.correlationId,
       causationId: command.inbox?.messageId,
       occurredAt: now,
@@ -237,37 +220,5 @@ export class SubmitWagerTransaction {
     const message = InboxMessage.receive({ ...command.inbox, payloadHash, receivedAt: now });
     message.markProcessed(now);
     await this.inbox.insert(message);
-  }
-
-  private async enqueueEvents(
-    transaction: WagerTransaction,
-    outcome: WagerApplicationOutcome,
-    wallet: Wallet | null,
-    context: EventContext,
-  ): Promise<void> {
-    const ctx = () => ({ eventId: this.ids.next(), ...context });
-
-    switch (outcome.decision) {
-      case WagerDecision.Applied:
-        if (wallet === null) {
-          throw new Error('applied transaction without a locked wallet');
-        }
-        await this.outbox.insert(OutboxMessage.enqueue(WagerTransactionProcessed.from(transaction, ctx())));
-        await this.outbox.insert(
-          OutboxMessage.enqueue(WalletBalanceChanged.from(wallet, outcome.ledgerEntry, ctx())),
-        );
-        return;
-      case WagerDecision.Recorded:
-        await this.outbox.insert(OutboxMessage.enqueue(WagerTransactionProcessed.from(transaction, ctx())));
-        return;
-      case WagerDecision.Rejected:
-        await this.outbox.insert(OutboxMessage.enqueue(WagerTransactionRejected.from(transaction, ctx())));
-        return;
-      case WagerDecision.AwaitingReference:
-        await this.outbox.insert(
-          OutboxMessage.enqueue(WagerTransactionPendingReference.from(transaction, ctx())),
-        );
-        return;
-    }
   }
 }

@@ -9,7 +9,7 @@ export const APP_TABLES = [
   'outbox_messages',
 ] as const;
 
-/** Toda constraint nomeada da migration inicial (T10). Constraint nova ou removida sem querer quebra o teste de catálogo. */
+/** Toda constraint nomeada das migrations. Constraint nova ou removida sem querer quebra o teste de catálogo. */
 export const EXPECTED_CONSTRAINTS: readonly string[] = [
   'inbox_messages_pkey',
   'outbox_messages_attempts_non_negative',
@@ -23,11 +23,13 @@ export const EXPECTED_CONSTRAINTS: readonly string[] = [
   'wager_transactions_kind_valid',
   'wager_transactions_opening_processed',
   'wager_transactions_pending_reference_has_reference',
+  'wager_transactions_pending_reference_scheduled',
   'wager_transactions_pkey',
   'wager_transactions_processed_complete',
   'wager_transactions_processed_reversal_resolved',
   'wager_transactions_provider_external_uq',
   'wager_transactions_provider_idempotency_uq',
+  'wager_transactions_reference_attempts_non_negative',
   'wager_transactions_reference_fk',
   'wager_transactions_reference_not_self',
   'wager_transactions_reversal_requires_reference',
@@ -52,7 +54,7 @@ export const EXPECTED_CONSTRAINTS: readonly string[] = [
 /** Índices explícitos; os que sustentam PK/UNIQUE já aparecem em `EXPECTED_CONSTRAINTS`. */
 export const EXPECTED_INDEXES: readonly string[] = [
   'wager_transactions_single_reversal_uq',
-  'wager_transactions_pending_reference_idx',
+  'wager_transactions_pending_reference_due_idx',
   'wager_transactions_reference_lookup_idx',
   'outbox_messages_pending_idx',
 ];

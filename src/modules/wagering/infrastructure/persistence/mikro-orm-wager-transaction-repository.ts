@@ -1,9 +1,12 @@
-import { UniqueConstraintViolationException } from '@mikro-orm/core';
+import { LockMode, UniqueConstraintViolationException } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 
 import { assertInTransaction } from '../../../../infrastructure/database/assert-in-transaction';
-import { WagerTransactionRepository } from '../../application/wager-transaction-repository';
+import {
+  WagerTransactionRepository,
+  type ClaimedPendingReference,
+} from '../../application/wager-transaction-repository';
 import {
   WagerTransactionAlreadyExistsError,
   WagerTransactionKind,
@@ -95,5 +98,34 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
       { disableIdentityMap: true, orderBy: { createdAt: 'asc', id: 'asc' } },
     );
     return rows.map(wagerTransactionFromRow);
+  }
+
+  async claimDuePendingReference(now: Date): Promise<ClaimedPendingReference | null> {
+    assertInTransaction(this.em, 'WagerTransactionRepository.claimDuePendingReference');
+    // PESSIMISTIC_PARTIAL_WRITE = FOR UPDATE SKIP LOCKED: a linha que outra instância já travou é pulada, nunca esperada.
+    // O predicado repete o do índice parcial wager_transactions_pending_reference_due_idx.
+    const [row] = await this.em.find(
+      WagerTransactionSchema,
+      { status: WagerTransactionStatus.PendingReference, nextReferenceAttemptAt: { $lte: now } },
+      {
+        orderBy: { nextReferenceAttemptAt: 'asc', id: 'asc' },
+        limit: 1,
+        lockMode: LockMode.PESSIMISTIC_PARTIAL_WRITE,
+        disableIdentityMap: true,
+      },
+    );
+    return row === undefined ? null : { transaction: wagerTransactionFromRow(row), attempts: row.referenceAttempts };
+  }
+
+  async scheduleReferenceRetry(id: string, attempts: number, nextAttemptAt: Date): Promise<void> {
+    assertInTransaction(this.em, 'WagerTransactionRepository.scheduleReferenceRetry');
+    const affected = await this.em.nativeUpdate(
+      WagerTransactionSchema,
+      { id, status: WagerTransactionStatus.PendingReference },
+      { referenceAttempts: attempts, nextReferenceAttemptAt: nextAttemptAt },
+    );
+    if (affected !== 1) {
+      throw new Error(`Pending reference transaction ${id} not found for retry`);
+    }
   }
 }

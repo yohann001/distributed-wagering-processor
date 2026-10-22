@@ -50,6 +50,15 @@ const envSchema = z.object({
   // A transação que reivindica o lote segura uma conexão e os locks das linhas durante o envio ao SQS: este teto
   // limita esse tempo e fica bem abaixo de `SQS_CONSUMER_SHUTDOWN_TIMEOUT_MS` e do `stop_grace_period` do compose.
   OUTBOX_PUBLISH_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
+  PENDING_REFERENCE_WORKER_ENABLED: z.stringbool().default(true),
+  // Cada transação do lote roda na própria transação SQL e segura a conexão e o lock da wallet só durante ela.
+  PENDING_REFERENCE_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+  PENDING_REFERENCE_WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
+  // Padrão igual a `DEFAULT_REFERENCE_RETRY_*` (domínio): 20 reavaliações, 1 s dobrando até 60 s, janela de ~11 a ~14 min.
+  PENDING_REFERENCE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(100).default(20),
+  PENDING_REFERENCE_RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(1000),
+  PENDING_REFERENCE_RETRY_MAX_DELAY_MS: z.coerce.number().int().positive().default(60000),
 })
   .refine((env) => (env.AWS_ACCESS_KEY_ID === undefined) === (env.AWS_SECRET_ACCESS_KEY === undefined), {
     path: ['AWS_SECRET_ACCESS_KEY'],

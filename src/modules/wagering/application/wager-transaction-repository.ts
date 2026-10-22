@@ -1,7 +1,14 @@
 import type { WagerTransaction } from '../domain/wager-transaction';
 
+export interface ClaimedPendingReference {
+  transaction: WagerTransaction;
+  /** Reavaliações anteriores que não acharam a referência utilizável. */
+  attempts: number;
+}
+
 /**
- * Porta de persistência da WagerTransaction. `insert` e `update` exigem transação ativa.
+ * Porta de persistência da WagerTransaction. `insert`, `update`, `claimDuePendingReference` e
+ * `scheduleReferenceRetry` exigem transação ativa.
  * `insert` lança `WagerTransactionAlreadyExistsError` quando a key ou o id externo já existem
  * (a transação SQL fica abortada).
  */
@@ -21,4 +28,10 @@ export abstract class WagerTransactionRepository {
 
   /** REFUND/ROLLBACK `PROCESSED` que apontam `referenceTransactionId` (índice parcial `wager_transactions_single_reversal_uq`). */
   abstract findProcessedReversalsOf(referenceTransactionId: string): Promise<WagerTransaction[]>;
+
+  /** A `PENDING_REFERENCE` vencida mais antiga (`next_reference_attempt_at <= now`), travada com FOR UPDATE SKIP LOCKED; null sem nenhuma. Exige transação ativa. */
+  abstract claimDuePendingReference(now: Date): Promise<ClaimedPendingReference | null>;
+
+  /** Grava a contagem e a próxima tentativa de uma `PENDING_REFERENCE`. Exige transação ativa. */
+  abstract scheduleReferenceRetry(id: string, attempts: number, nextAttemptAt: Date): Promise<void>;
 }

@@ -117,7 +117,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §12
 - **Depende de:** T00
 
-### [ ] T14 — Estratégia de concorrência por wallet
+### [x] T14 — Estratégia de concorrência por wallet
 - **Descrição:** Implementar e encapsular a estratégia escolhida (ex.: `SELECT … FOR UPDATE` na linha da wallet dentro de `em.transactional()`, update condicional por `version` e retry limitado em deadlock/serialization failure), sempre por `walletId` e nunca com lock global. Contabilizar conflitos de lock em métrica.
 - **Critério de aceite:** teste de integração com N débitos paralelos na mesma wallet sem lost update e sem saldo negativo. Wallets diferentes não se bloqueiam. Justificativa e trade-offs no `ARCHITECTURE.md`.
 - **Seção:** §8, §5.6, §5.7, §5.8

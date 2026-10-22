@@ -10,6 +10,8 @@ const envSchema = z.object({
 
   DATABASE_URL: z.url(),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
+  DB_LOCK_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
+  DB_TRANSACTION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
 
   AWS_REGION: z.string().min(1),
   AWS_ENDPOINT_URL: z.url().optional(),

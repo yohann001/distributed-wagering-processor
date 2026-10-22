@@ -1,8 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 
 import { WagerTransactionRepository } from './application/wager-transaction-repository';
 import { MikroOrmWagerTransactionRepository } from './infrastructure/persistence/mikro-orm-wager-transaction-repository';
 
+@Global()
 @Module({
   providers: [{ provide: WagerTransactionRepository, useClass: MikroOrmWagerTransactionRepository }],
   exports: [WagerTransactionRepository],

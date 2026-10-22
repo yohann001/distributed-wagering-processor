@@ -1,4 +1,4 @@
-import { LockMode } from '@mikro-orm/core';
+import { LockMode, UniqueConstraintViolationException } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 
@@ -8,8 +8,10 @@ import {
   ConcurrencyConflictReason,
 } from '../../../../shared/application/unit-of-work';
 import { WalletRepository } from '../../application/wallet-repository';
-import type { Wallet } from '../../domain/wallet';
+import { WalletAlreadyExistsError, type Wallet } from '../../domain/wallet';
 import { WalletSchema, walletFromRow, walletToRow } from './wallet.persistence';
+
+export const WALLET_PLAYER_CURRENCY_CONSTRAINT = 'wallets_player_currency_uq';
 
 @Injectable()
 export class MikroOrmWalletRepository extends WalletRepository {
@@ -19,7 +21,18 @@ export class MikroOrmWalletRepository extends WalletRepository {
 
   async insert(wallet: Wallet): Promise<void> {
     assertInTransaction(this.em, 'WalletRepository.insert');
-    await this.em.insert(WalletSchema, walletToRow(wallet));
+    try {
+      await this.em.insert(WalletSchema, walletToRow(wallet));
+    } catch (error) {
+      // A constraint, e não uma leitura prévia, é a guarda: vale também entre instâncias.
+      if (
+        error instanceof UniqueConstraintViolationException &&
+        (error as { constraint?: unknown }).constraint === WALLET_PLAYER_CURRENCY_CONSTRAINT
+      ) {
+        throw new WalletAlreadyExistsError(wallet.playerId, wallet.currency);
+      }
+      throw error;
+    }
   }
 
   async findById(id: string): Promise<Wallet | null> {

@@ -2,6 +2,10 @@ import type { Wallet } from '../domain/wallet';
 
 /** Porta de persistência da Wallet. `insert`, `lockById` e `updateBalance` exigem transação ativa. */
 export abstract class WalletRepository {
+  /**
+   * Lança `WalletAlreadyExistsError` quando a constraint única de `(playerId, currency)` é violada.
+   * No Postgres a transação fica abortada nesse caso e precisa de rollback.
+   */
   abstract insert(wallet: Wallet): Promise<void>;
 
   abstract findById(id: string): Promise<Wallet | null>;

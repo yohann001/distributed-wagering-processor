@@ -44,6 +44,18 @@ export class InsufficientFundsError extends DomainError {
   }
 }
 
+/** Já existe wallet para playerId + currency (§6.2). Detectado pela constraint do banco, nunca por consulta prévia. */
+export class WalletAlreadyExistsError extends DomainError {
+  readonly code = FailureCode.WalletAlreadyExists;
+
+  constructor(
+    readonly playerId: string,
+    readonly currency: string,
+  ) {
+    super(`A wallet already exists for player ${playerId} in ${currency}`);
+  }
+}
+
 /** Erro de programação: abertura chamada com dados incoerentes pelo caso de uso. */
 export class InvalidWalletOpeningError extends DomainError {
   readonly code = FailureCode.InvariantViolation;

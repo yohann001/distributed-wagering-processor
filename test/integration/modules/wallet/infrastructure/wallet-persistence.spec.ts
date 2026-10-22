@@ -7,7 +7,7 @@ import { WagerTransactionRepository } from '../../../../../src/modules/wagering/
 import { WagerTransaction } from '../../../../../src/modules/wagering/domain/wager-transaction';
 import { WalletLedgerRepository } from '../../../../../src/modules/wallet/application/wallet-ledger-repository';
 import { WalletRepository } from '../../../../../src/modules/wallet/application/wallet-repository';
-import { Wallet } from '../../../../../src/modules/wallet/domain/wallet';
+import { Wallet, WalletAlreadyExistsError } from '../../../../../src/modules/wallet/domain/wallet';
 import { LedgerDirection } from '../../../../../src/modules/wallet/domain/wallet-ledger-entry';
 import { Money } from '../../../../../src/shared/domain/money';
 import { createTestApp } from '../../../../support/create-test-app';
@@ -120,6 +120,38 @@ describe('wallet persistence (Postgres real)', () => {
       expect(readWallet.balance.equals(readEntry.balanceAfter)).toBe(true);
     },
   );
+
+  it('translates only the player + currency unique violation into WalletAlreadyExistsError', async () => {
+    const playerId = `player-${Bun.randomUUIDv7()}`;
+    const { wallet } = Wallet.open({
+      id: Bun.randomUUIDv7(),
+      playerId,
+      initialBalance: Money.zero('BRL'),
+      openedAt: OPENED_AT,
+    });
+    await inTransaction(orm, () => wallets.insert(wallet));
+
+    const sameOwner = Wallet.open({
+      id: Bun.randomUUIDv7(),
+      playerId,
+      initialBalance: Money.zero('BRL'),
+      openedAt: OPENED_AT,
+    }).wallet;
+    const duplicateOwner = await inTransaction(orm, () => wallets.insert(sameOwner)).catch((e: unknown) => e);
+    expect(duplicateOwner).toBeInstanceOf(WalletAlreadyExistsError);
+    expect((duplicateOwner as WalletAlreadyExistsError).playerId).toBe(playerId);
+    expect((duplicateOwner as WalletAlreadyExistsError).currency).toBe('BRL');
+
+    const sameId = Wallet.open({
+      id: wallet.id,
+      playerId: `player-${Bun.randomUUIDv7()}`,
+      initialBalance: Money.zero('BRL'),
+      openedAt: OPENED_AT,
+    }).wallet;
+    const duplicateId = await inTransaction(orm, () => wallets.insert(sameId)).catch((e: unknown) => e);
+    expect(duplicateId).not.toBeInstanceOf(WalletAlreadyExistsError);
+    expect(duplicateId).toMatchObject({ code: '23505', constraint: 'wallets_pkey' });
+  });
 
   it('returns null for ids that do not exist', async () => {
     expect(await inFreshContext(orm, () => wallets.findById(Bun.randomUUIDv7()))).toBeNull();

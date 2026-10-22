@@ -123,7 +123,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §8, §5.6, §5.7, §5.8
 - **Depende de:** T12, T13
 
-### [ ] T15 — Use case `OpenWallet`
+### [x] T15 — Use case `OpenWallet`
 - **Descrição:** Cria a wallet. Com saldo inicial > 0, cria na **mesma transação SQL** a `WagerTransaction` interna `OPENING` (`PROCESSED`), o lançamento `CREDIT` e os eventos na outbox. Wallet duplicada (`playerId + currency`) vira conflito, detectado pela constraint do banco.
 - **Critério de aceite:** testes de integração para wallet com saldo (1 `OPENING`, 1 `CREDIT`, `version 1`, consistente com o ledger), wallet com saldo zero (sem lançamento) e criação duplicada concorrente (exatamente uma criada, a outra conflito).
 - **Seção:** §9 (Criar wallet), §6.2

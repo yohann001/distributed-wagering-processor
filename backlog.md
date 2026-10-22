@@ -61,7 +61,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §9 (Idempotência), §6.3, §13 (Unidade: idempotency key com payload divergente)
 - **Depende de:** T05
 
-### [ ] T08 — `IntegrationEvent` e eventos mínimos
+### [x] T08 — `IntegrationEvent` e eventos mínimos
 - **Descrição:** Classe abstrata `IntegrationEvent<T>` (envelope com `eventId`, `aggregateId`, `correlationId`, `causationId`, `occurredAt`, `version`, `toJSON`) e subclasses `WagerTransactionProcessed`, `WagerTransactionRejected`, `WalletBalanceChanged` e `WagerTransactionPendingReference`, com `eventType`/`version` no tipo e factories `from(...)`.
 - **Critério de aceite:** `toJSON()` produz JSON estável com `occurredAt` ISO-8601 e `MoneyProps` (string decimal) em `data`, nunca a instância de `Money`. Teste de snapshot do envelope de cada evento.
 - **Seção:** §11 (Eventos mínimos)

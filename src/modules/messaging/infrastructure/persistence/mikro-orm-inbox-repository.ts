@@ -1,10 +1,13 @@
+import { UniqueConstraintViolationException } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 
 import { assertInTransaction } from '../../../../infrastructure/database/assert-in-transaction';
 import { InboxRepository } from '../../application/inbox-repository';
-import type { InboxMessage } from '../../domain/inbox-message';
+import { InboxMessageAlreadyExistsError, type InboxMessage } from '../../domain/inbox-message';
 import { InboxMessageSchema, inboxMessageFromRow, inboxMessageToRow } from './inbox-message.persistence';
+
+export const INBOX_MESSAGE_PK_CONSTRAINT = 'inbox_messages_pkey';
 
 @Injectable()
 export class MikroOrmInboxRepository extends InboxRepository {
@@ -14,7 +17,18 @@ export class MikroOrmInboxRepository extends InboxRepository {
 
   async insert(message: InboxMessage): Promise<void> {
     assertInTransaction(this.em, 'InboxRepository.insert');
-    await this.em.insert(InboxMessageSchema, inboxMessageToRow(message));
+    try {
+      await this.em.insert(InboxMessageSchema, inboxMessageToRow(message));
+    } catch (error) {
+      // A PK, e não uma leitura prévia, é a guarda final da deduplicação: vale também entre instâncias (§10).
+      if (
+        error instanceof UniqueConstraintViolationException &&
+        (error as { constraint?: unknown }).constraint === INBOX_MESSAGE_PK_CONSTRAINT
+      ) {
+        throw new InboxMessageAlreadyExistsError(message.consumerName, message.messageId);
+      }
+      throw error;
+    }
   }
 
   async update(message: InboxMessage): Promise<void> {

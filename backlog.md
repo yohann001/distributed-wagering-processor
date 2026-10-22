@@ -129,7 +129,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §9 (Criar wallet), §6.2
 - **Depende de:** T14
 
-### [ ] T16 — Use case `SubmitWagerTransaction`
+### [x] T16 — Use case `SubmitWagerTransaction`
 - **Descrição:** Caso de uso único para HTTP e SQS. Em uma transação SQL:
   1. idempotência persistente: busca pela key; se existir, compara o `payloadHash` e devolve replay ou conflito;
   2. em corrida de inserção, a unique constraint é a guarda final e o use case relê e devolve replay;

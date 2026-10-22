@@ -110,6 +110,34 @@ export class ReferenceRequiredError extends DomainError {
   }
 }
 
+/** Mesma idempotency key (ou mesmo id externo) com outro payload (§6.3, §9): conflito, não replay. Nada é gravado. */
+export class IdempotencyConflictError extends DomainError {
+  readonly code = FailureCode.IdempotencyConflict;
+
+  constructor(
+    readonly providerId: string,
+    readonly idempotencyKey: string,
+  ) {
+    super(`Idempotency key of provider ${providerId} was already used with a different payload`);
+  }
+}
+
+/**
+ * Outra transação com a mesma key ou o mesmo id externo commitou primeiro (corrida de inserção). Traduzido
+ * da unique constraint pelo adapter; o caso de uso refaz o trabalho numa transação nova, que devolve replay
+ * ou conflito. Se escapar, reenviar resolve.
+ */
+export class WagerTransactionAlreadyExistsError extends DomainError {
+  readonly code = FailureCode.TransientFailure;
+
+  constructor(
+    readonly providerId: string,
+    readonly constraint: string,
+  ) {
+    super(`A wager transaction of provider ${providerId} already exists (${constraint})`);
+  }
+}
+
 /** Erro de programação: o caso de uso ou a política chamou a entidade com argumentos incoerentes. */
 export class InvalidWagerTransactionError extends DomainError {
   readonly code = FailureCode.InvariantViolation;

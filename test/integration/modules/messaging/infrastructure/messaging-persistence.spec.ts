@@ -5,7 +5,7 @@ import type { INestApplication } from '@nestjs/common';
 
 import { InboxRepository } from '../../../../../src/modules/messaging/application/inbox-repository';
 import { OutboxRepository } from '../../../../../src/modules/messaging/application/outbox-repository';
-import { InboxMessage } from '../../../../../src/modules/messaging/domain/inbox-message';
+import { InboxMessage, InboxMessageAlreadyExistsError } from '../../../../../src/modules/messaging/domain/inbox-message';
 import {
   DEFAULT_OUTBOX_BACKOFF,
   OutboxMessage,
@@ -13,6 +13,7 @@ import {
 import { WagerTransaction, WagerTransactionKind } from '../../../../../src/modules/wagering/domain/wager-transaction';
 import { WagerTransactionProcessed } from '../../../../../src/modules/wagering/domain/wager-transaction-events';
 import { ExponentialBackoff } from '../../../../../src/shared/domain/exponential-backoff';
+import { FailureCode } from '../../../../../src/shared/domain/failure-code';
 import { Money } from '../../../../../src/shared/domain/money';
 import { createTestApp } from '../../../../support/create-test-app';
 import { inFreshContext, inTransaction, present } from '../../../../support/orm-context';
@@ -111,6 +112,25 @@ describe('messaging persistence (Postgres real)', () => {
       await expect(inTransaction(orm, () => inbox.update(message))).rejects.toThrow(
         'not found for update',
       );
+    });
+
+    it('translates a repeated (consumerName, messageId) into InboxMessageAlreadyExistsError, per consumer', async () => {
+      const messageId = Bun.randomUUIDv7();
+      const receive = (name: string) =>
+        InboxMessage.receive({ messageId, consumerName: name, payloadHash: 'hash-abc', receivedAt: RECEIVED_AT });
+      await inTransaction(orm, () => inbox.insert(receive(consumerName)));
+
+      const error = await inTransaction(orm, () => inbox.insert(receive(consumerName))).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(InboxMessageAlreadyExistsError);
+      expect((error as InboxMessageAlreadyExistsError).consumerName).toBe(consumerName);
+      expect((error as InboxMessageAlreadyExistsError).messageId).toBe(messageId);
+      expect((error as InboxMessageAlreadyExistsError).code).toBe(FailureCode.TransientFailure);
+
+      await inTransaction(orm, () => inbox.insert(receive('another-consumer')));
+      expect(
+        await inFreshContext(orm, () => inbox.findByKey('another-consumer', messageId)),
+      ).not.toBeNull();
     });
 
     it('refuses to write outside em.transactional()', async () => {

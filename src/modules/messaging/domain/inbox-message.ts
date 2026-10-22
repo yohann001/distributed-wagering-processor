@@ -10,6 +10,30 @@ export class InvalidInboxMessageError extends DomainError {
   }
 }
 
+/** Mesmo `(consumerName, messageId)` com outro payload: não é duplicata. O consumer (T22) manda para a DLQ. */
+export class InboxMessageConflictError extends DomainError {
+  readonly code = FailureCode.IdempotencyConflict;
+
+  constructor(
+    readonly consumerName: string,
+    readonly messageId: string,
+  ) {
+    super(`Message ${messageId} of consumer ${consumerName} was already received with a different payload`);
+  }
+}
+
+/** Corrida na PK da inbox: o caso de uso refaz o trabalho numa transação nova, que trata a entrega como duplicata. */
+export class InboxMessageAlreadyExistsError extends DomainError {
+  readonly code = FailureCode.TransientFailure;
+
+  constructor(
+    readonly consumerName: string,
+    readonly messageId: string,
+  ) {
+    super(`Message ${messageId} of consumer ${consumerName} was already received`);
+  }
+}
+
 export interface ReceiveInboxProps {
   messageId: string;
   consumerName: string;

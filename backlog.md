@@ -170,7 +170,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §2
 - **Depende de:** T19
 
-### [ ] T21 — Adapter SQS e `GET /health/ready`
+### [x] T21 — Adapter SQS e `GET /health/ready`
 - **Descrição:** Cliente SQS configurado para o LocalStack (endpoint, região e credenciais via env), atrás de uma porta. `GET /health/ready` verifica Postgres (`select 1`) e SQS (ex.: `GetQueueAttributes`) com timeout curto. 503 se alguma dependência falhar.
 - **Critério de aceite:** teste de integração com ready 200 e infra no ar, e ready 503 quando o SQS está inalcançável (endpoint inválido). `/health/live` continua sem tocar dependências.
 - **Seção:** §9 (Health checks), §12

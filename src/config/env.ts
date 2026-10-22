@@ -13,6 +13,8 @@ const envSchema = z.object({
   DB_LOCK_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
   DB_TRANSACTION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
 
+  HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(1000),
+
   AWS_REGION: z.string().min(1),
   AWS_ENDPOINT_URL: z.url().optional(),
   AWS_ACCESS_KEY_ID: z.string().min(1),

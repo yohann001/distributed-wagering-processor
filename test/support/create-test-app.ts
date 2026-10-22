@@ -1,3 +1,4 @@
+import { SQSClient } from '@aws-sdk/client-sqs';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Logger } from 'nestjs-pino';
@@ -14,6 +15,8 @@ export interface CreateTestAppOptions {
   logDestination?: DestinationStream;
   /** Substitui a porta de identidade; sem ele vale o adapter no-op, que aceita toda requisição. */
   providerIdentity?: ProviderIdentityPort;
+  /** Substitui o cliente SQS do app (ex.: endpoint inalcançável nos testes de readiness). */
+  sqsClient?: SQSClient;
 }
 
 /** Sobe a aplicação Nest completa contra a infraestrutura real do docker compose. */
@@ -23,6 +26,9 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
     .useValue(options.logDestination ?? DISCARD_LOG_DESTINATION);
   if (options.providerIdentity !== undefined) {
     builder.overrideProvider(ProviderIdentityPort).useValue(options.providerIdentity);
+  }
+  if (options.sqsClient !== undefined) {
+    builder.overrideProvider(SQSClient).useValue(options.sqsClient);
   }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication({ bufferLogs: true });

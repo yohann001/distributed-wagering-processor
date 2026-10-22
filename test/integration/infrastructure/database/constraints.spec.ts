@@ -777,6 +777,65 @@ describe('schema constraints and triggers (Postgres real)', () => {
       );
     });
 
+    // Constraint trigger deferred: o status da transação é conferido no COMMIT, não no INSERT do lançamento.
+    describe('trigger wallet_ledger_entries_transaction_processed', () => {
+      const expected = { code: '23514', constraint: 'wallet_ledger_entries_transaction_processed' };
+
+      it('rejects an entry for a REJECTED transaction, when the transaction commits', async () => {
+        await expectDbError(
+          commit(async (em) => {
+            const wallet = await insertWallet(em, { balance: '100.00' });
+            const rejected = await insertTransaction(em, {
+              walletId: wallet.id,
+              playerId: wallet.playerId,
+              status: 'REJECTED',
+              failureCode: 'INSUFFICIENT_FUNDS',
+            });
+            await insertLedgerEntry(em, { walletId: wallet.id, transactionId: rejected.id });
+          }),
+          expected,
+        );
+      });
+
+      it('rejects an entry for a transaction that is still PENDING at commit', async () => {
+        await expectDbError(
+          commit(async (em) => {
+            const wallet = await insertWallet(em, { balance: '100.00' });
+            const pending = await insertTransaction(em, { walletId: wallet.id, playerId: wallet.playerId });
+            await insertLedgerEntry(em, { walletId: wallet.id, transactionId: pending.id });
+          }),
+          expected,
+        );
+      });
+
+      it('rejects an entry for a PROCESSED LOSS', async () => {
+        await expectDbError(
+          commit(async (em) => {
+            const wallet = await insertWallet(em, { balance: '100.00' });
+            const loss = await insertTransaction(em, processedBetFor(wallet, { kind: 'LOSS' }));
+            await insertLedgerEntry(em, { walletId: wallet.id, transactionId: loss.id });
+          }),
+          expected,
+        );
+      });
+
+      it('accepts an entry inserted while the transaction is PENDING, once it becomes PROCESSED before commit', async () => {
+        const entry = await commit(async (em) => {
+          const wallet = await insertWallet(em, { balance: '90.00', version: 2 });
+          const pending = await insertTransaction(em, { walletId: wallet.id, playerId: wallet.playerId });
+          const inserted = await insertLedgerEntry(em, { walletId: wallet.id, transactionId: pending.id });
+          await em.execute(
+            "update wager_transactions set status = 'PROCESSED', balance_after = '90.00', processed_at = ? where id = ?",
+            [NOW, pending.id],
+          );
+          return inserted;
+        });
+
+        const rows = await run('select id from wallet_ledger_entries where id = ?', [entry.id]);
+        expect(rows).toHaveLength(1);
+      });
+    });
+
     describe('trigger wallet_ledger_entries_append_only', () => {
       it('rejects UPDATE', async () => {
         const { wallet } = await seedWalletWithBet();

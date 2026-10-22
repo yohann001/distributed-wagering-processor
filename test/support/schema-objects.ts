@@ -60,11 +60,13 @@ export const EXPECTED_INDEXES: readonly string[] = [
 export const EXPECTED_TRIGGERS: readonly string[] = [
   'wallet_ledger_entries_append_only',
   'wallet_ledger_entries_no_truncate',
+  'wallet_ledger_entries_transaction_processed',
   'wager_transactions_guard',
   'wager_transactions_no_truncate',
 ];
 
 export const EXPECTED_FUNCTIONS: readonly string[] = [
+  'wallet_ledger_entries_check_transaction',
   'wallet_ledger_entries_reject_change',
   'wager_transactions_guard_change',
 ];

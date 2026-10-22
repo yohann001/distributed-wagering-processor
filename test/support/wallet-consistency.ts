@@ -9,6 +9,8 @@ interface WalletRow {
 }
 
 interface LedgerRow {
+  /** `kind` da transação do lançamento: o CREDIT de abertura (`OPENING`) não sobe a `version`. */
+  kind: string;
   direction: string;
   amount: string;
   balance_before: string;
@@ -18,7 +20,7 @@ interface LedgerRow {
 /**
  * §13: o saldo da wallet é o saldo reconstruído pelo ledger. Lê a wallet e o ledger por `seq` e falha,
  * com a verificação que quebrou na mensagem, se o saldo diverge da soma, se a cadeia
- * `balanceBefore/After` (a partir de 0.00) não é contínua ou se `version` não bate com os lançamentos (§6.2).
+ * `balanceBefore/After` (a partir de 0.00) não é contínua ou se `version` não é 1 + lançamentos fora da abertura (§6.2).
  */
 export async function assertWalletConsistent(orm: MikroORM, walletId: string): Promise<void> {
   const em = orm.em.fork();
@@ -35,9 +37,11 @@ export async function assertWalletConsistent(orm: MikroORM, walletId: string): P
   const walletBalance = Money.from({ amount: walletRow.balance, currency });
 
   const entries = await em.execute<LedgerRow[]>(
-    `select direction, amount::text as amount, balance_before::text as balance_before,
-            balance_after::text as balance_after
-       from wallet_ledger_entries where wallet_id = ? order by seq`,
+    `select t.kind, e.direction, e.amount::text as amount, e.balance_before::text as balance_before,
+            e.balance_after::text as balance_after
+       from wallet_ledger_entries e
+       join wager_transactions t on t.id = e.transaction_id
+      where e.wallet_id = ? order by e.seq`,
     [walletId],
   );
 
@@ -70,9 +74,11 @@ export async function assertWalletConsistent(orm: MikroORM, walletId: string): P
     throw new Error(`wallet ${walletId} balance differs from last ledger balance_after`);
   }
 
-  if (walletRow.version !== Math.max(1, entries.length)) {
+  // Nasce com 1 (com ou sem o CREDIT de abertura) e sobe 1 a cada mudança de saldo depois disso.
+  const expectedVersion = 1 + entries.filter((entry) => entry.kind !== 'OPENING').length;
+  if (walletRow.version !== expectedVersion) {
     throw new Error(
-      `wallet ${walletId} version ${walletRow.version} does not match ${entries.length} ledger entries`,
+      `wallet ${walletId} version ${walletRow.version} does not match ${entries.length} ledger entries (expected ${expectedVersion})`,
     );
   }
 }

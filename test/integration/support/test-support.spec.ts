@@ -16,7 +16,7 @@ import { createTestSqsClient, purgeQueue, receiveAll, testQueueUrls } from '../.
 import { assertWalletConsistent } from '../../support/wallet-consistency';
 
 interface RawMovement {
-  kind: 'OPENING' | 'BET';
+  kind: 'OPENING' | 'BET' | 'WIN';
   direction: 'CREDIT' | 'DEBIT';
   amount: string;
   balanceBefore: string;
@@ -221,6 +221,36 @@ describe('test support (Postgres e LocalStack reais)', () => {
       });
 
       await assertWalletConsistent(orm, wallet.id);
+    });
+
+    it('passes for a wallet opened with a zero balance and followed by a credit (version 2, one entry)', async () => {
+      const { wallet } = await openWalletWithBalance(app, { amount: '0.00' });
+      await appendRawMovement(wallet, {
+        kind: 'WIN',
+        direction: 'CREDIT',
+        amount: '50.00',
+        balanceBefore: '0.00',
+        balanceAfter: '50.00',
+        walletBalance: '50.00',
+        walletVersion: 2,
+      });
+
+      await assertWalletConsistent(orm, wallet.id);
+    });
+
+    it('fails when a wallet opened with a zero balance keeps version 1 after a credit', async () => {
+      const { wallet } = await openWalletWithBalance(app, { amount: '0.00' });
+      await appendRawMovement(wallet, {
+        kind: 'WIN',
+        direction: 'CREDIT',
+        amount: '50.00',
+        balanceBefore: '0.00',
+        balanceAfter: '50.00',
+        walletBalance: '50.00',
+        walletVersion: 1,
+      });
+
+      await expect(assertWalletConsistent(orm, wallet.id)).rejects.toThrow('version 1 does not match');
     });
 
     it('fails when the wallet balance differs from the ledger sum', async () => {

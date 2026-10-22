@@ -67,7 +67,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §11 (Eventos mínimos)
 - **Depende de:** T04, T05
 
-### [ ] T09 — `InboxMessage` e `OutboxMessage` (domínio)
+### [x] T09 — `InboxMessage` e `OutboxMessage` (domínio)
 - **Descrição:** `InboxMessage.receive/rehydrate/markProcessed/isProcessed` e `OutboxMessage.enqueue/rehydrate/isPending/isDue/markPublished/scheduleRetry`, com backoff exponencial e jitter limitados.
 - **Critério de aceite:** testes unitários de backoff (crescimento e teto), `isDue` em relação ao relógio, e `markPublished` idempotente ou tratado como erro de programação, conforme a decisão documentada.
 - **Seção:** §6.5

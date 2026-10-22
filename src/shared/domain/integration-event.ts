@@ -38,7 +38,7 @@ export interface IntegrationEventJson<T> {
   data: Readonly<T>;
 }
 
-function deepFreeze<V>(value: V): V {
+export function deepFreeze<V>(value: V): V {
   if (typeof value === 'object' && value !== null) {
     Object.freeze(value);
     for (const child of Object.values(value)) {

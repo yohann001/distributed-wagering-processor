@@ -43,7 +43,7 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 
 ### Hierarquia de erros
 
-`DomainError` é abstrata e expõe `code: FailureCode` e `action: FailureAction`. As subclasses atuais são `InvalidMoneyError`, `CurrencyMismatchError`, `InvalidTransactionStateError`, `InvalidLedgerEntryError`, `InsufficientFundsError` e `InvalidWalletOpeningError`. Regras de negócio não lançam exceção para o controller: viram `REJECTED` com o código correspondente. O mapeamento para HTTP (T19) e para ack, retry e DLQ (T22) parte desta classificação.
+`DomainError` é abstrata e expõe `code: FailureCode` e `action: FailureAction`. As subclasses atuais são `InvalidMoneyError`, `CurrencyMismatchError`, `InvalidTransactionStateError`, `InvalidLedgerEntryError`, `InsufficientFundsError`, `InvalidWalletOpeningError`, `KindNotAllowedError`, `ReferenceRequiredError` e `InvalidWagerTransactionError`. Regras de negócio não lançam exceção para o controller: viram `REJECTED` com o código correspondente. O mapeamento para HTTP (T19) e para ack, retry e DLQ (T22) parte desta classificação.
 
 ## Lançamento de ledger (§6.4)
 
@@ -64,3 +64,45 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 - **Ids e tempo vêm de quem chama** (portas `IdGenerator` e `Clock`). O domínio não gera id nem lê o relógio.
 - **Saldo insuficiente lança `InsufficientFundsError`, e `canDebit` permite decidir antes.** A `Wallet` não sabe se o débito é uma aposta ou uma reversão. A política de aplicação (T06) consulta `canDebit` e escolhe o `failureCode`: `INSUFFICIENT_FUNDS` para `BET`, `REVERSAL_INSUFFICIENT_FUNDS` para `ROLLBACK` de `WIN`/`REFUND`. A rejeição de negócio vira `REJECTED` persistido. A exceção da `Wallet` é a última barreira, não o fluxo normal. A mensagem do erro só cita o `walletId`, nunca valores (§12).
 - **`version` é o contador de alterações de saldo** e será usado no controle de concorrência (T13). O domínio só garante que ele incrementa exatamente uma vez por lançamento. `rehydrate` não revalida e continua a partir da `version` persistida.
+
+## WagerTransaction e máquina de estados (§6.3)
+
+`WagerTransaction` (`src/modules/wagering/domain/wager-transaction.ts`). Testes: `test/unit/modules/wagering/domain/wager-transaction.spec.ts`.
+
+### Transições
+
+```
+            create()
+               │
+               ▼
+           PENDING ──────────────┬──────────────┬──────────────┐
+               │                 │              │              │
+  markPendingReference()  markProcessed()   reject()        fail()
+               │                 │              │              │
+               ▼                 ▼              ▼              ▼
+     PENDING_REFERENCE ───► PROCESSED       REJECTED        FAILED
+       (↺ idempotente)  ───────────────────►    ▲              ▲
+                        ────────────────────────┴──────────────┘
+
+  createOpening() ──► PROCESSED (OPENING, interno)
+```
+
+| De \ Para | `PENDING_REFERENCE` | `PROCESSED` | `REJECTED` | `FAILED` |
+|---|---|---|---|---|
+| `PENDING` | ✓ | ✓ | ✓ | ✓ |
+| `PENDING_REFERENCE` | no-op (idempotente) | ✓ | ✓ | ✓ |
+| `PROCESSED`, `REJECTED`, `FAILED` | `InvalidTransactionStateError` | `InvalidTransactionStateError` | `InvalidTransactionStateError` | `InvalidTransactionStateError` |
+
+Uma transição a partir de estado terminal é erro de programação (`INVARIANT_VIOLATION`) e não altera nada.
+
+### Decisões
+
+- **`create` recebe só transações de provedor e nasce em `PENDING`.** `OPENING` ou um kind desconhecido lançam `KindNotAllowedError` (`KIND_NOT_ALLOWED`). `REFUND` ou `ROLLBACK` sem `referenceExternalTransactionId` (ausente ou vazio) lançam `ReferenceRequiredError` (`REFERENCE_REQUIRED`, §7 regra 1). Em `WIN` e `LOSS` a referência é opcional (o §7 diz que o `WIN` "pode referenciar" a `BET`). Uma referência vazia é normalizada para `undefined`.
+- **`money > 0` exigido em `create` para `BET`, `WIN`, `REFUND` e `ROLLBACK`** (`InvalidMoneyError`, `INVALID_MONEY`). O motivo é que o ledger recusa lançamento de valor zero. `LOSS` aceita `0.00`, porque só registra o resultado.
+- **`createOpening` é o único caminho para criar um `OPENING`.** Ele nasce em `PROCESSED` com `balanceAfter = money`. Os campos sintéticos (provider, ids externos, rodada) ficam por conta do caso de uso que cria a wallet.
+- **`balanceAfter` é o saldo observado na decisão, devolvido no replay (§7 regra 7).** `markProcessed` o recebe sempre. No `LOSS` ele é o saldo inalterado. `reject(code, balanceAfter | null)` também o recebe. O valor `null` serve para quando não há saldo que possa ser exposto: wallet inexistente, wallet de outro player (expor o saldo vazaria dado de terceiro) ou wallet de outra moeda. Em ambos os casos, saldo de outra moeda ou negativo é `InvalidWagerTransactionError`.
+- **`markProcessed` exige o `referenceTransactionId` (id interno resolvido) para `REFUND` e `ROLLBACK`.** Em `WIN` ele é opcional.
+- **`markPendingReference` vale para qualquer transação que tenha referência,** inclusive um `WIN` que aponta uma `BET` ainda não recebida (§7 regra 8). A partir de `PENDING_REFERENCE` é um no-op, para que o worker possa reavaliar sem tratar um caso especial. Contagem de tentativas e backoff ficam com o worker (§7.1).
+- **`reject` só aceita códigos de negócio.** `TRANSIENT_FAILURE` (nada é gravado), `PERMANENT_FAILURE` (vai para `fail`) e `INVARIANT_VIOLATION` (nunca persistido) lançam `InvalidWagerTransactionError`. Pelo mesmo critério, `fail` só aceita `PERMANENT_FAILURE`.
+- **`ledgerDirectionFor(reference?)`:** `BET` → `DEBIT`; `WIN`, `REFUND` e `OPENING` → `CREDIT`; `ROLLBACK` → direção inversa da direção da referência (`BET` → `CREDIT`; `WIN`/`REFUND` → `DEBIT`). Lança `InvalidWagerTransactionError` para `LOSS` (não há lançamento), para `ROLLBACK` sem referência e para `ROLLBACK` de `ROLLBACK`, `LOSS` ou `OPENING`. A política da T06 rejeita esses casos com `INVALID_REFERENCE_KIND` antes de chegar aqui, então a exceção é a última barreira.
+- `createdAt` e `processedAt` são guardados com cópia defensiva, como na `Wallet` e no ledger. `rehydrate` não revalida nada (aceita inclusive `OPENING`).

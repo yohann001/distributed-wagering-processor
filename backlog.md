@@ -43,7 +43,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §6.2, §13 (Unidade: invariantes da `Wallet`, conflito de moeda)
 - **Depende de:** T03
 
-### [ ] T05 — `WagerTransaction` e máquina de estados
+### [x] T05 — `WagerTransaction` e máquina de estados
 - **Descrição:** Entidade com `create` (nasce `PENDING`, valida exigência de referência por kind, recusa `OPENING` vindo de fora), `rehydrate`, transições `markProcessed`, `markPendingReference`, `reject`, `fail` e consultas `isTerminal`, `affectsBalance`, `requiresReference`, `matchesPayload`, `ledgerDirectionFor`. Guarda o saldo resultante observado, para replay (§7 regra 7).
 - **Critério de aceite:** testes cobrindo todas as transições válidas e inválidas (transição a partir de terminal lança `InvalidTransactionStateError`), `REFUND`/`ROLLBACK` sem referência rejeitados na criação, direção de ledger por kind (`ROLLBACK` inverte a referência). Diagrama ou tabela de transições no `ARCHITECTURE.md`.
 - **Seção:** §6.3, §7 regras 1 e 6

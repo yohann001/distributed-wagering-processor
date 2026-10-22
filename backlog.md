@@ -101,7 +101,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §4 (ORM), §6.0, §6.1 (persistência)
 - **Depende de:** T10
 
-### [ ] T12 — Suporte de testes e testes de migrations/constraints
+### [x] T12 — Suporte de testes e testes de migrations/constraints
 - **Descrição:** Helpers em `test/support/`: reset de banco entre testes, fixtures (wallet com saldo, provider), `assertWalletConsistent(walletId)` (saldo == soma do ledger e cadeia `balanceBefore/After` contínua) e utilitário para limpar e ler filas SQS. Testes de integração que tentam violar cada constraint via SQL direto.
 - **Critério de aceite:** cada constraint da T10 tem um teste que comprova a rejeição pelo banco: saldo negativo, wallet duplicada, `UPDATE`/`DELETE` em ledger, lançamento desbalanceado, transação duplicada, dupla reversão, inbox duplicado. O roundtrip das migrations é testado.
 - **Seção:** §13 (Integração: migrations e constraints), §5.9

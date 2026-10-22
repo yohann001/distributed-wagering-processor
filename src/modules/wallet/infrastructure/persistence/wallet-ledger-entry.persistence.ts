@@ -1,4 +1,4 @@
-import { EntitySchema } from '@mikro-orm/core';
+import { BigIntType, EntitySchema } from '@mikro-orm/core';
 
 import { Money } from '../../../../shared/domain/money';
 import { LedgerDirection, WalletLedgerEntry } from '../../domain/wallet-ledger-entry';
@@ -6,7 +6,7 @@ import { LedgerDirection, WalletLedgerEntry } from '../../domain/wallet-ledger-e
 // Row + mapper em vez de mapear a classe de domínio direto (§6.1): `WalletLedgerEntry` é `Object.freeze`
 // e o MikroORM precisa anotar a instância; além disso `money`, `balanceBefore` e `balanceAfter` dividem
 // uma única coluna `currency`, o que um custom type de coluna única não representa. A coluna `seq`
-// (gerada pelo banco) não é mapeada: só a persistência a usa.
+// (gerada pelo banco) é mapeada só para leitura, na paginação por cursor, e fica fora do domínio.
 
 export interface WalletLedgerEntryRow {
   id: string;
@@ -19,6 +19,8 @@ export interface WalletLedgerEntryRow {
   balanceBefore: string;
   balanceAfter: string;
   createdAt: Date;
+  /** Identity `bigint` lido como string (pode passar de `Number.MAX_SAFE_INTEGER`); gerado pelo banco, nunca gravado. */
+  seq?: string;
 }
 
 export const WalletLedgerEntrySchema = new EntitySchema<WalletLedgerEntryRow>({
@@ -34,6 +36,7 @@ export const WalletLedgerEntrySchema = new EntitySchema<WalletLedgerEntryRow>({
     balanceBefore: { type: 'decimal', precision: 18, scale: 2 },
     balanceAfter: { type: 'decimal', precision: 18, scale: 2 },
     createdAt: { type: 'datetime', columnType: 'timestamptz' },
+    seq: { type: new BigIntType('string'), columnType: 'bigint', nullable: true },
   },
 });
 

@@ -7,6 +7,7 @@ import { OutboxRepository } from '../messaging/application/outbox-repository';
 import { WagerTransactionRepository } from '../wagering/application/wager-transaction-repository';
 import { OpenWallet } from './application/open-wallet';
 import { WalletLedgerRepository } from './application/wallet-ledger-repository';
+import { WalletQueries } from './application/wallet-queries';
 import { WalletRepository } from './application/wallet-repository';
 import { MikroOrmWalletLedgerRepository } from './infrastructure/persistence/mikro-orm-wallet-ledger-repository';
 import { MikroOrmWalletRepository } from './infrastructure/persistence/mikro-orm-wallet-repository';
@@ -38,7 +39,13 @@ import { MikroOrmWalletRepository } from './infrastructure/persistence/mikro-orm
         ids: IdGenerator,
       ) => new OpenWallet(uow, wallets, ledger, transactions, outbox, clock, ids),
     },
+    {
+      provide: WalletQueries,
+      inject: [WalletRepository, WalletLedgerRepository],
+      useFactory: (wallets: WalletRepository, ledger: WalletLedgerRepository) =>
+        new WalletQueries(wallets, ledger),
+    },
   ],
-  exports: [WalletRepository, WalletLedgerRepository, OpenWallet],
+  exports: [WalletRepository, WalletLedgerRepository, OpenWallet, WalletQueries],
 })
 export class WalletModule {}

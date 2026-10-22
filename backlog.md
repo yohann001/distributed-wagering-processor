@@ -142,7 +142,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §7, §9 (Submeter transação, Idempotência), §10, §11, §5.2, §5.4
 - **Depende de:** T15
 
-### [ ] T17 — Use cases de consulta
+### [x] T17 — Use cases de consulta
 - **Descrição:** Wallet por id, ledger paginado com **cursor estável e opaco** (ex.: base64 de `(created_at, id)` ou de uma sequência monotônica), transação por id interno e por `(providerId, externalTransactionId)`.
 - **Critério de aceite:** a paginação não pula nem repete itens quando novos lançamentos chegam durante a navegação (teste). Cursor inválido é tratado como payload inválido. `limit` validado com teto.
 - **Seção:** §9 (Consultas)

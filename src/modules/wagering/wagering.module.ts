@@ -8,6 +8,7 @@ import { OutboxRepository } from '../messaging/application/outbox-repository';
 import { WalletLedgerRepository } from '../wallet/application/wallet-ledger-repository';
 import { WalletRepository } from '../wallet/application/wallet-repository';
 import { SubmitWagerTransaction } from './application/submit-wager-transaction';
+import { WagerTransactionQueries } from './application/wager-transaction-queries';
 import { WagerTransactionRepository } from './application/wager-transaction-repository';
 import { WagerApplicationPolicy } from './domain/wager-application-policy';
 import { MikroOrmWagerTransactionRepository } from './infrastructure/persistence/mikro-orm-wager-transaction-repository';
@@ -50,7 +51,12 @@ import { MikroOrmWagerTransactionRepository } from './infrastructure/persistence
           ids,
         ),
     },
+    {
+      provide: WagerTransactionQueries,
+      inject: [WagerTransactionRepository],
+      useFactory: (transactions: WagerTransactionRepository) => new WagerTransactionQueries(transactions),
+    },
   ],
-  exports: [WagerTransactionRepository, SubmitWagerTransaction],
+  exports: [WagerTransactionRepository, SubmitWagerTransaction, WagerTransactionQueries],
 })
 export class WageringModule {}

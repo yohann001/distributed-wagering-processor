@@ -16,6 +16,15 @@ export class InvalidRequestError extends DomainError {
   }
 }
 
+/** Requisição sem credencial válida para a porta de identidade (§2). A mensagem é fixa e nunca cita a credencial. */
+export class UnauthenticatedError extends DomainError {
+  readonly code = FailureCode.Unauthenticated;
+
+  constructor() {
+    super('Authentication required');
+  }
+}
+
 /** Recurso consultado que não existe. A mensagem cita só o tipo do recurso, nunca o id. */
 export class ResourceNotFoundError extends DomainError {
   constructor(

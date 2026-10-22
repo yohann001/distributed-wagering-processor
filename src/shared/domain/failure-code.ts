@@ -20,6 +20,9 @@ export enum FailureCode {
   ReferenceRequired = 'REFERENCE_REQUIRED',
   IdempotencyConflict = 'IDEMPOTENCY_CONFLICT',
 
+  // Autenticação (§2)
+  Unauthenticated = 'UNAUTHENTICATED',
+
   // Wallet
   WalletNotFound = 'WALLET_NOT_FOUND',
   WalletPlayerMismatch = 'WALLET_PLAYER_MISMATCH',
@@ -53,6 +56,7 @@ export const FAILURE_ACTIONS: Readonly<Record<FailureCode, FailureAction>> = Obj
   [FailureCode.KindNotAllowed]: FailureAction.FixPayload,
   [FailureCode.ReferenceRequired]: FailureAction.FixPayload,
   [FailureCode.IdempotencyConflict]: FailureAction.FixPayload,
+  [FailureCode.Unauthenticated]: FailureAction.FixPayload,
   [FailureCode.WalletNotFound]: FailureAction.FixPayload,
   [FailureCode.WalletPlayerMismatch]: FailureAction.FixPayload,
   [FailureCode.WalletAlreadyExists]: FailureAction.GiveUp,

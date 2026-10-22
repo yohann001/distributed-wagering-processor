@@ -2,7 +2,11 @@ import { describe, expect, it } from 'bun:test';
 
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 
-import { InvalidRequestError, ResourceNotFoundError } from '../../../../src/infrastructure/http/http-errors';
+import {
+  InvalidRequestError,
+  ResourceNotFoundError,
+  UnauthenticatedError,
+} from '../../../../src/infrastructure/http/http-errors';
 import {
   HTTP_STATUS_BY_FAILURE_CODE,
   RETRY_AFTER_SECONDS,
@@ -53,6 +57,17 @@ describe('mapErrorToHttp', () => {
     expect(mapped.status).toBe(400);
     expect(mapped.body.failureCode).toBe(failureCode);
     expect(mapped.body.issues).toBeUndefined();
+  });
+
+  it('maps UnauthenticatedError to 401 with FIX_PAYLOAD and no log', () => {
+    const mapped = mapErrorToHttp(new UnauthenticatedError());
+
+    expect(mapped.status).toBe(401);
+    expect(mapped.body.failureCode).toBe(FailureCode.Unauthenticated);
+    expect(mapped.body.action).toBe(FailureAction.FixPayload);
+    expect(mapped.body.message).toBe('Authentication required');
+    expect(mapped.logLevel).toBe('none');
+    expect(mapped.retryAfterSeconds).toBeUndefined();
   });
 
   it('maps an idempotency conflict to 409 without leaking the key', () => {

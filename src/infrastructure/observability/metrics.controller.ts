@@ -1,6 +1,9 @@
 import { Controller, Get, Header, StreamableFile } from '@nestjs/common';
 import { Registry } from 'prom-client';
 
+import { Public } from '../auth/public.decorator';
+
+@Public()
 @Controller('metrics')
 export class MetricsController {
   constructor(private readonly registry: Registry) {}

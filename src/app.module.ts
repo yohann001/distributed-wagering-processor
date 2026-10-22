@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { HealthModule } from './health/health.module';
+import { AuthModule } from './infrastructure/auth/auth.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
 import { HttpModule } from './infrastructure/http/http.module';
 import { ObservabilityModule } from './infrastructure/observability/observability.module';
@@ -13,6 +14,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
   imports: [
     ObservabilityModule,
     HttpModule,
+    AuthModule,
     DatabaseModule,
     RuntimeModule,
     WalletModule,

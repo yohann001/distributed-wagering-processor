@@ -19,6 +19,7 @@ export const HTTP_STATUS_BY_FAILURE_CODE: Readonly<Record<FailureCode, number>> 
   [FailureCode.CurrencyMismatch]: 400,
   [FailureCode.KindNotAllowed]: 400,
   [FailureCode.ReferenceRequired]: 400,
+  [FailureCode.Unauthenticated]: 401,
   [FailureCode.IdempotencyConflict]: 409,
   [FailureCode.WalletAlreadyExists]: 409,
   [FailureCode.WalletNotFound]: 404,

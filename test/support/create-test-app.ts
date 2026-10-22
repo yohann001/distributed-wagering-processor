@@ -5,20 +5,26 @@ import type { DestinationStream } from 'pino';
 
 import { AppModule } from '../../src/app.module';
 import { LOG_DESTINATION } from '../../src/infrastructure/observability/observability.module';
+import { ProviderIdentityPort } from '../../src/shared/application/provider-identity';
 
 const DISCARD_LOG_DESTINATION: DestinationStream = { write: () => undefined };
 
 export interface CreateTestAppOptions {
   /** Destino dos logs do app; sem ele, os logs são descartados para a suíte ficar silenciosa. */
   logDestination?: DestinationStream;
+  /** Substitui a porta de identidade; sem ele vale o adapter no-op, que aceita toda requisição. */
+  providerIdentity?: ProviderIdentityPort;
 }
 
 /** Sobe a aplicação Nest completa contra a infraestrutura real do docker compose. */
 export async function createTestApp(options: CreateTestAppOptions = {}): Promise<INestApplication> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+  const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(LOG_DESTINATION)
-    .useValue(options.logDestination ?? DISCARD_LOG_DESTINATION)
-    .compile();
+    .useValue(options.logDestination ?? DISCARD_LOG_DESTINATION);
+  if (options.providerIdentity !== undefined) {
+    builder.overrideProvider(ProviderIdentityPort).useValue(options.providerIdentity);
+  }
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication({ bufferLogs: true });
   app.useLogger(app.get(Logger));
   app.enableShutdownHooks();

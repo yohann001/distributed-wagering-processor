@@ -164,7 +164,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §9, §6.3 (OPENING interno)
 - **Depende de:** T15–T18
 
-### [ ] T20 — Ponto de extensão de autenticação
+### [x] T20 — Ponto de extensão de autenticação
 - **Descrição:** Decidir entre integrar um IdP externo (Keycloak/Zitadel) ou deixar o ponto de extensão explícito (`AuthGuard` no-op / `ProviderIdentityPort`). Health fica aberto. A identidade do provedor vinda da fila continua sujeita às validações de domínio.
 - **Critério de aceite:** guard aplicado aos endpoints de negócio e ausente em `/health/*`. Decisão e desenho no `ARCHITECTURE.md`. Sem tabela própria de usuários/senhas.
 - **Seção:** §2

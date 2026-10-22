@@ -16,6 +16,11 @@ import {
 } from '../../src/infrastructure/database/mikro-orm-unit-of-work';
 import { LOG_DESTINATION } from '../../src/infrastructure/observability/observability.module';
 import {
+  OUTBOX_PUBLISHER_OPTIONS,
+  outboxPublisherOptionsFromEnv,
+  type OutboxPublisherOptions,
+} from '../../src/modules/messaging/infrastructure/outbox/outbox-publisher-options';
+import {
   SQS_CONSUMER_OPTIONS,
   sqsConsumerOptionsFromEnv,
   type SqsConsumerOptions,
@@ -37,6 +42,11 @@ export interface CreateTestAppOptions {
    * suítes usam a mesma fila e um consumer rodando roubaria as mensagens delas.
    */
   sqsConsumer?: Partial<Omit<SqsConsumerOptions, 'enabled'>>;
+  /**
+   * Liga o publisher da outbox com estas opções por cima das do ambiente. Sem ele o worker fica desligado: as outras
+   * suítes conferem linhas pendentes da outbox e um worker rodando as publicaria.
+   */
+  outboxPublisher?: Partial<Omit<OutboxPublisherOptions, 'enabled'>>;
   /** Opções do `UnitOfWork` por cima das do ambiente (ex.: `lockTimeoutMs` curto). O adapter continua o real. */
   unitOfWork?: Partial<UnitOfWorkOptions>;
 }
@@ -59,6 +69,14 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
       options.sqsConsumer === undefined
         ? { ...consumerOptions, enabled: false }
         : { ...consumerOptions, ...options.sqsConsumer, enabled: true },
+    );
+  const publisherOptions = outboxPublisherOptionsFromEnv(loadEnv());
+  builder
+    .overrideProvider(OUTBOX_PUBLISHER_OPTIONS)
+    .useValue(
+      options.outboxPublisher === undefined
+        ? { ...publisherOptions, enabled: false }
+        : { ...publisherOptions, ...options.outboxPublisher, enabled: true },
     );
   if (options.unitOfWork !== undefined) {
     const overrides = options.unitOfWork;

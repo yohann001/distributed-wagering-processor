@@ -5,6 +5,7 @@ import {
   ReceiveMessageCommand,
   SendMessageCommand,
   type Message,
+  type SendMessageBatchCommandInput,
   type SQSClient,
 } from '@aws-sdk/client-sqs';
 
@@ -17,9 +18,33 @@ export function createTestSqsClient(): SQSClient {
 }
 
 /** URLs das filas de teste, lidas do `.env`. */
-export function testQueueUrls(): { wager: string; dlq: string } {
+export function testQueueUrls(): { wager: string; dlq: string; events: string } {
   const env = loadEnv();
-  return { wager: env.SQS_WAGER_QUEUE_URL, dlq: env.SQS_WAGER_DLQ_URL };
+  return { wager: env.SQS_WAGER_QUEUE_URL, dlq: env.SQS_WAGER_DLQ_URL, events: env.SQS_EVENTS_QUEUE_URL };
+}
+
+/**
+ * Cliente SQS real que registra o `MessageDeduplicationId` (o `eventId`) de cada entrada de `SendMessageBatch`.
+ * Só observa o cliente real, não o substitui: o envio segue para o LocalStack.
+ */
+export function countingSqsClient(): { client: SQSClient; sentEventIds: string[] } {
+  const client = createTestSqsClient();
+  const sentEventIds: string[] = [];
+  client.middlewareStack.add(
+    (next, context) => async (args) => {
+      if (context.commandName === 'SendMessageBatchCommand') {
+        const { Entries = [] } = args.input as SendMessageBatchCommandInput;
+        for (const entry of Entries) {
+          if (entry.MessageDeduplicationId !== undefined) {
+            sentEventIds.push(entry.MessageDeduplicationId);
+          }
+        }
+      }
+      return next(args);
+    },
+    { step: 'initialize', name: 'countOutboxSends' },
+  );
+  return { client, sentEventIds };
 }
 
 /**

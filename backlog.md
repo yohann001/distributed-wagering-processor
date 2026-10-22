@@ -191,7 +191,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §10, §5.3
 - **Depende de:** T16, T21
 
-### [ ] T23 — Outbox publisher
+### [x] T23 — Outbox publisher
 - **Descrição:** Worker em cada instância que reivindica lotes pendentes e vencidos com `FOR UPDATE SKIP LOCKED` (ou lease com expiração), publica no SQS e marca `published_at`. Em caso de falha, `scheduleRetry` com backoff. Definir e documentar o destino dos eventos (ex.: fila `wagering-events.fifo` criada no init do LocalStack, com `MessageDeduplicationId = eventId`). Métrica de outbox lag.
 - **Critério de aceite:** eventos só são publicados após o commit; nenhum é perdido se o processo morrer entre o commit e a publicação; dois publishers concorrentes não publicam o mesmo evento em paralelo; publicação duplicada é segura (o consumidor deduplica por `eventId`).
 - **Seção:** §11, §5.4

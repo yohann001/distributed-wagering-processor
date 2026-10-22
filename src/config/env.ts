@@ -30,6 +30,7 @@ const envSchema = z.object({
   AWS_SESSION_TOKEN: optionalText,
   SQS_WAGER_QUEUE_URL: z.url(),
   SQS_WAGER_DLQ_URL: z.url(),
+  SQS_EVENTS_QUEUE_URL: z.url(),
 
   SQS_CONSUMER_ENABLED: z.stringbool().default(true),
   SQS_CONSUMER_WAIT_TIME_SECONDS: z.coerce.number().int().min(0).max(20).default(20),
@@ -41,6 +42,14 @@ const envSchema = z.object({
   SQS_CONSUMER_RETRY_MAX_DELAY_MS: z.coerce.number().int().positive().default(60000),
   // Abaixo do `stop_grace_period` do compose (30 s): o drenar do SIGTERM precisa terminar antes do SIGKILL.
   SQS_CONSUMER_SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
+
+  OUTBOX_PUBLISHER_ENABLED: z.stringbool().default(true),
+  // 10 é o limite de entradas do `SendMessageBatch`.
+  OUTBOX_PUBLISHER_BATCH_SIZE: z.coerce.number().int().min(1).max(10).default(10),
+  OUTBOX_PUBLISHER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
+  // A transação que reivindica o lote segura uma conexão e os locks das linhas durante o envio ao SQS: este teto
+  // limita esse tempo e fica bem abaixo de `SQS_CONSUMER_SHUTDOWN_TIMEOUT_MS` e do `stop_grace_period` do compose.
+  OUTBOX_PUBLISH_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 })
   .refine((env) => (env.AWS_ACCESS_KEY_ID === undefined) === (env.AWS_SECRET_ACCESS_KEY === undefined), {
     path: ['AWS_SECRET_ACCESS_KEY'],

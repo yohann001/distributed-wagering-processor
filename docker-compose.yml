@@ -12,6 +12,7 @@ x-app-env: &app-env
   AWS_SECRET_ACCESS_KEY: test
   SQS_WAGER_QUEUE_URL: http://localstack:4566/000000000000/wager-transactions.fifo
   SQS_WAGER_DLQ_URL: http://localstack:4566/000000000000/wager-transactions-dlq.fifo
+  SQS_EVENTS_QUEUE_URL: http://localstack:4566/000000000000/wagering-events.fifo
 
 services:
   postgres:

@@ -8,6 +8,7 @@ const BASE_ENV = {
   AWS_REGION: 'us-east-1',
   SQS_WAGER_QUEUE_URL: 'http://localhost:4566/000000000000/wager-transactions.fifo',
   SQS_WAGER_DLQ_URL: 'http://localhost:4566/000000000000/wager-transactions-dlq.fifo',
+  SQS_EVENTS_QUEUE_URL: 'http://localhost:4566/000000000000/wagering-events.fifo',
 };
 
 describe('buildSqsClient', () => {

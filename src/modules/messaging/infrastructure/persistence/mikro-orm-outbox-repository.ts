@@ -1,3 +1,4 @@
+import { LockMode } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 
@@ -37,5 +38,31 @@ export class MikroOrmOutboxRepository extends OutboxRepository {
   async findById(id: string): Promise<OutboxMessage | null> {
     const row = await this.em.findOne(OutboxMessageSchema, { id }, { disableIdentityMap: true });
     return row === null ? null : outboxMessageFromRow(row);
+  }
+
+  async claimDue(now: Date, limit: number): Promise<OutboxMessage[]> {
+    assertInTransaction(this.em, 'OutboxRepository.claimDue');
+    // PESSIMISTIC_PARTIAL_WRITE = FOR UPDATE SKIP LOCKED: as linhas que outro publisher já travou são puladas, nunca
+    // esperadas. Linhas ainda não commitadas são invisíveis (READ COMMITTED), então nada é publicado antes do commit (§5.4).
+    const rows = await this.em.find(
+      OutboxMessageSchema,
+      { publishedAt: null, nextAttemptAt: { $lte: now } },
+      {
+        orderBy: { nextAttemptAt: 'asc', id: 'asc' },
+        limit,
+        lockMode: LockMode.PESSIMISTIC_PARTIAL_WRITE,
+        disableIdentityMap: true,
+      },
+    );
+    return rows.map(outboxMessageFromRow);
+  }
+
+  async oldestPendingOccurredAt(): Promise<Date | null> {
+    // O MikroORM devolve `timestamptz` cru como texto em `execute`: milissegundos desde a época evitam parsear o formato.
+    const [row] = await this.em.execute<{ oldest_ms: string | null }[]>(
+      'select (extract(epoch from min(occurred_at)) * 1000)::bigint::text as oldest_ms from outbox_messages where published_at is null',
+    );
+    const oldestMs = row?.oldest_ms;
+    return oldestMs === undefined || oldestMs === null ? null : new Date(Number(oldestMs));
   }
 }

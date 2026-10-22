@@ -71,9 +71,12 @@ export function toSubmitCommandFields(parsed: WagerTransactionPayload): SubmitCo
   };
 }
 
+/** Compartilhada com o `idempotencyKey` opcional do envelope SQS (T22): a mesma regra nas duas bordas. */
+export const idempotencyKeyText = z.string().regex(/^[\x21-\x7e]{1,255}$/, 'must be 1-255 visible ASCII characters');
+
 /** O header é opaco: usado como recebido. O Node coloca os nomes em minúsculas. */
 export const idempotencyKeyHeaders = z.object({
-  'idempotency-key': z.string().regex(/^[\x21-\x7e]{1,255}$/, 'must be 1-255 visible ASCII characters'),
+  'idempotency-key': idempotencyKeyText,
 });
 
 export const transactionIdParams = z.object({ transactionId: uuidText });

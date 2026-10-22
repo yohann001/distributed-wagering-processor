@@ -180,7 +180,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 5 — Mensageria e workers
 
-### [ ] T22 — Consumer SQS (`wager-transactions.fifo`)
+### [x] T22 — Consumer SQS (`wager-transactions.fifo`)
 - **Descrição:** Long polling, validação do envelope `WagerTransactionRequested` e chamada ao **mesmo** use case da T16, com dedup via inbox `(consumerName, messageId)` na mesma transação. `DeleteMessage` (ack) **somente após o commit**. Classificação de erros:
   - negócio: terminal, com ack;
   - transitório: retry com backoff via `ChangeMessageVisibility`;

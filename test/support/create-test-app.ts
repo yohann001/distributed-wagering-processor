@@ -1,13 +1,27 @@
 import { SQSClient } from '@aws-sdk/client-sqs';
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { EntityManager } from '@mikro-orm/postgresql';
 import { Test } from '@nestjs/testing';
 import { Logger } from 'nestjs-pino';
 import type { DestinationStream } from 'pino';
 
 import { AppModule } from '../../src/app.module';
+import { loadEnv } from '../../src/config/env';
+import { ConcurrencyMetrics } from '../../src/infrastructure/database/concurrency-metrics';
+import {
+  MikroOrmUnitOfWork,
+  unitOfWorkOptionsFromEnv,
+  type UnitOfWorkOptions,
+} from '../../src/infrastructure/database/mikro-orm-unit-of-work';
 import { LOG_DESTINATION } from '../../src/infrastructure/observability/observability.module';
+import {
+  SQS_CONSUMER_OPTIONS,
+  sqsConsumerOptionsFromEnv,
+  type SqsConsumerOptions,
+} from '../../src/modules/messaging/infrastructure/sqs/sqs-consumer-options';
 import { ProviderIdentityPort } from '../../src/shared/application/provider-identity';
+import { UnitOfWork } from '../../src/shared/application/unit-of-work';
 
 const DISCARD_LOG_DESTINATION: DestinationStream = { write: () => undefined };
 
@@ -18,6 +32,13 @@ export interface CreateTestAppOptions {
   providerIdentity?: ProviderIdentityPort;
   /** Substitui o cliente SQS do app (ex.: endpoint inalcançável nos testes de readiness). */
   sqsClient?: SQSClient;
+  /**
+   * Liga o consumer SQS com estas opções por cima das do ambiente. Sem ele o consumer fica desligado: as outras
+   * suítes usam a mesma fila e um consumer rodando roubaria as mensagens delas.
+   */
+  sqsConsumer?: Partial<Omit<SqsConsumerOptions, 'enabled'>>;
+  /** Opções do `UnitOfWork` por cima das do ambiente (ex.: `lockTimeoutMs` curto). O adapter continua o real. */
+  unitOfWork?: Partial<UnitOfWorkOptions>;
 }
 
 /** Sobe a aplicação Nest completa contra a infraestrutura real do docker compose. */
@@ -30,6 +51,22 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
   }
   if (options.sqsClient !== undefined) {
     builder.overrideProvider(SQSClient).useValue(options.sqsClient);
+  }
+  const consumerOptions = sqsConsumerOptionsFromEnv(loadEnv());
+  builder
+    .overrideProvider(SQS_CONSUMER_OPTIONS)
+    .useValue(
+      options.sqsConsumer === undefined
+        ? { ...consumerOptions, enabled: false }
+        : { ...consumerOptions, ...options.sqsConsumer, enabled: true },
+    );
+  if (options.unitOfWork !== undefined) {
+    const overrides = options.unitOfWork;
+    builder.overrideProvider(UnitOfWork).useFactory({
+      inject: [EntityManager, ConcurrencyMetrics],
+      factory: (em: EntityManager, metrics: ConcurrencyMetrics) =>
+        new MikroOrmUnitOfWork(em, metrics, { ...unitOfWorkOptionsFromEnv(loadEnv()), ...overrides }),
+    });
   }
   const moduleRef = await builder.compile();
   // Mesma configuração de corpo do `main.ts`: só JSON.

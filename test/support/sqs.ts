@@ -1,7 +1,9 @@
 import {
   DeleteMessageBatchCommand,
+  GetQueueAttributesCommand,
   PurgeQueueCommand,
   ReceiveMessageCommand,
+  SendMessageCommand,
   type Message,
   type SQSClient,
 } from '@aws-sdk/client-sqs';
@@ -82,4 +84,89 @@ export async function receiveAll(
     }
   }
   return received;
+}
+
+export interface SendRawOptions {
+  groupId: string;
+  /** Sem ele, cada envio recebe um id novo: o mesmo corpo enviado duas vezes simula uma reentrega que o dedup do FIFO não pega. */
+  deduplicationId?: string;
+  correlationId?: string;
+}
+
+/** Envia o corpo como texto, sem passar por `JSON.stringify`: para mensagens que não são JSON. */
+export async function sendRaw(
+  client: SQSClient,
+  queueUrl: string,
+  body: string,
+  opts: SendRawOptions,
+): Promise<void> {
+  await client.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: body,
+      MessageGroupId: opts.groupId,
+      MessageDeduplicationId: opts.deduplicationId ?? Bun.randomUUIDv7(),
+      ...(opts.correlationId !== undefined && {
+        MessageAttributes: { correlationId: { DataType: 'String', StringValue: opts.correlationId } },
+      }),
+    }),
+  );
+}
+
+export function sendEnvelope(
+  client: SQSClient,
+  queueUrl: string,
+  envelope: Record<string, unknown>,
+  opts: SendRawOptions,
+): Promise<void> {
+  return sendRaw(client, queueUrl, JSON.stringify(envelope), opts);
+}
+
+/** Envelope `WagerTransactionRequested` (T22); `messageId` sem override é um UUIDv7 novo. */
+export function buildEnvelope(overrides: {
+  messageId?: string;
+  data: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    messageId: overrides.messageId ?? Bun.randomUUIDv7(),
+    type: 'WagerTransactionRequested',
+    occurredAt: new Date().toISOString(),
+    data: overrides.data,
+  };
+}
+
+/** Mensagens visíveis e em voo (recebidas e ainda dentro da visibilidade). Os números do SQS são aproximados. */
+export async function queueDepth(
+  client: SQSClient,
+  queueUrl: string,
+): Promise<{ visible: number; inFlight: number }> {
+  const { Attributes = {} } = await client.send(
+    new GetQueueAttributesCommand({
+      QueueUrl: queueUrl,
+      AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'],
+    }),
+  );
+  return {
+    visible: Number(Attributes.ApproximateNumberOfMessages ?? '0'),
+    inFlight: Number(Attributes.ApproximateNumberOfMessagesNotVisible ?? '0'),
+  };
+}
+
+/** Repete `probe` até devolver algo verdadeiro (qualquer valor que não seja `null`, `undefined` ou `false`). */
+export async function waitFor<T>(
+  probe: () => Promise<T | null | undefined | false>,
+  timeoutMs = 10000,
+  intervalMs = 100,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await probe();
+    if (value !== null && value !== undefined && value !== false) {
+      return value;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
+    }
+    await Bun.sleep(intervalMs);
+  }
 }

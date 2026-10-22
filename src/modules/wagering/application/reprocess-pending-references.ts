@@ -9,6 +9,7 @@ import type { ReferenceRetryPolicy } from '../domain/reference-retry-policy';
 import { WagerDecision, type WagerApplicationPolicy } from '../domain/wager-application-policy';
 import type { WagerTransaction } from '../domain/wager-transaction';
 import { enqueueWagerOutcomeEvents, type WagerEventContext } from './wager-outcome-events';
+import type { WagerTransactionMonitor } from './wager-transaction-monitor';
 import type { WagerTransactionRepository } from './wager-transaction-repository';
 
 export enum PendingReferenceOutcome {
@@ -48,6 +49,8 @@ export interface ReprocessPendingReferencesResult {
  *   reagendada com backoff exponencial; no limite a transação vira `REJECTED` (`REFERENCE_NOT_FOUND` se a referência
  *   não existe, `REFERENCE_NOT_PROCESSED` se existe mas ainda está pendente) e o evento `WagerTransactionRejected`
  *   entra na outbox. O evento de pendência já saiu na submissão e não se repete a cada reavaliação.
+ * - Cada decisão (`Processed`, `Rejected`, `Expired`) é avisada ao `WagerTransactionMonitor` depois do commit da
+ *   transação dela, fora do `uow.run`, para um retry do `UnitOfWork` não contar duas vezes.
  */
 export class ReprocessPendingReferences {
   constructor(
@@ -61,6 +64,7 @@ export class ReprocessPendingReferences {
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
     private readonly batchSize: number,
+    private readonly monitor: WagerTransactionMonitor,
   ) {}
 
   async execute(correlationId: string): Promise<ReprocessPendingReferencesResult> {
@@ -69,6 +73,9 @@ export class ReprocessPendingReferences {
       const item = await this.uow.run(() => this.reprocessNext(correlationId));
       if (item === null) {
         break;
+      }
+      if (item.outcome !== PendingReferenceOutcome.Retried) {
+        this.monitor.pendingReferenceDecided(item.transaction);
       }
       reprocessed.push(item);
     }

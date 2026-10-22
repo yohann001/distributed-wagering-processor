@@ -3,6 +3,7 @@ import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/com
 import { CorrelationId } from '../../../infrastructure/http/correlation-id.decorator';
 import { ResourceNotFoundError } from '../../../infrastructure/http/http-errors';
 import { moneyFrom, parseRequest } from '../../../infrastructure/http/request-schemas';
+import { LogContext } from '../../../infrastructure/observability/log-context';
 import { FailureCode } from '../../../shared/domain/failure-code';
 import { OpenWallet } from '../application/open-wallet';
 import { ReconcileWallet } from '../application/reconcile-wallet';
@@ -29,6 +30,7 @@ export class WalletsController {
     private readonly openWallet: OpenWallet,
     private readonly walletQueries: WalletQueries,
     private readonly reconcileWallet: ReconcileWallet,
+    private readonly logContext: LogContext,
   ) {}
 
   @Post()
@@ -40,12 +42,14 @@ export class WalletsController {
       initialBalance: moneyFrom(initialBalance),
       correlationId,
     });
+    this.logContext.assign({ walletId: wallet.id });
     return toWalletResponse(wallet);
   }
 
   @Get(':walletId')
   async get(@Param() params: unknown): Promise<WalletResponse> {
     const { walletId } = parseRequest('params', walletParams, params);
+    this.logContext.assign({ walletId });
     const wallet = await this.walletQueries.getWallet(walletId);
     if (wallet === null) {
       throw walletNotFound();
@@ -56,6 +60,7 @@ export class WalletsController {
   @Get(':walletId/ledger')
   async ledger(@Param() params: unknown, @Query() query: unknown): Promise<LedgerPageResponse> {
     const { walletId } = parseRequest('params', walletParams, params);
+    this.logContext.assign({ walletId });
     const { cursor, limit } = parseRequest('query', ledgerQuery, query);
     const listQuery: ListLedgerQuery = { walletId };
     if (cursor !== undefined) {
@@ -75,6 +80,7 @@ export class WalletsController {
   @HttpCode(200)
   async reconcile(@Param() params: unknown): Promise<ReconciliationResponse> {
     const { walletId } = parseRequest('params', walletParams, params);
+    this.logContext.assign({ walletId });
     const reconciliation = await this.reconcileWallet.execute(walletId);
     if (reconciliation === null) {
       throw walletNotFound();

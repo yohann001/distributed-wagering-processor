@@ -208,7 +208,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 6 — Observabilidade completa
 
-### [ ] T25 — Cobertura de métricas e revisão de logs
+### [x] T25 — Cobertura de métricas e revisão de logs
 - **Descrição:** Garantir que existem e são incrementadas as métricas de: transações por status, duplicatas detectadas (replay HTTP + inbox), retries, mensagens enviadas à DLQ, conflitos de lock, outbox lag, latência de processamento (histograma) e divergências de reconciliação. Revisar todos os logs para presença dos campos de contexto e ausência de payload financeiro completo.
 - **Critério de aceite:** teste que executa um fluxo e verifica os contadores em `GET /metrics`. Lista de métricas documentada (nome, tipo, labels).
 - **Seção:** §12, §9 (Reconciliação)

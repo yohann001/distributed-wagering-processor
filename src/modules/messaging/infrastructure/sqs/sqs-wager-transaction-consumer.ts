@@ -226,7 +226,10 @@ export class SqsWagerTransactionConsumer {
       return;
     }
 
-    await this.deadLetter(message, failure.failureCode, receiveCount);
+    const deadLettered = await this.deadLetter(message, failure.failureCode, receiveCount);
+    if (!deadLettered) {
+      return;
+    }
     this.count('dead_lettered');
     this.logContext
       .current()
@@ -269,8 +272,9 @@ export class SqsWagerTransactionConsumer {
   /**
    * Copia o corpo sem alteração para a DLQ e só então apaga da fila principal. Um crash no meio reentrega a
    * mensagem, e a DLQ deduplica pelo `MessageId` do SQS (janela de 5 min). Se o envio falhar, a mensagem fica.
+   * Devolve se a mensagem chegou à DLQ.
    */
-  private async deadLetter(message: Message, failureCode: FailureCode, receiveCount: number): Promise<void> {
+  private async deadLetter(message: Message, failureCode: FailureCode, receiveCount: number): Promise<boolean> {
     try {
       await this.client.send(
         new SendMessageCommand({
@@ -289,9 +293,10 @@ export class SqsWagerTransactionConsumer {
       );
     } catch (error) {
       this.logContext.current().warn({ errorName: errorNameOf(error) }, 'sqs dead-letter send failed');
-      return;
+      return false;
     }
     await this.ack(message);
+    return true;
   }
 
   /** Visibilidade 0: a mensagem que não chegou a ser processada fica disponível já para outra réplica. */

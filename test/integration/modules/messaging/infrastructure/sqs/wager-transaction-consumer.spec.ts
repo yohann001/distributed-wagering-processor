@@ -12,6 +12,7 @@ import { ExponentialBackoff } from '../../../../../../src/shared/domain/exponent
 import { createTestApp } from '../../../../../support/create-test-app';
 import { newProviderId, openWalletWithBalance } from '../../../../../support/fixtures';
 import { createLogCapture, type LogCapture, type LogLine } from '../../../../../support/log-capture';
+import { sampleValue, scrapeMetrics } from '../../../../../support/metrics';
 import {
   buildEnvelope,
   createTestSqsClient,
@@ -483,5 +484,42 @@ describe('SQS wager consumer: shutdown (app, Postgres e LocalStack reais)', () =
     } finally {
       await closeAndWaitForAbortedLongPoll(second);
     }
+  });
+});
+
+describe('SQS wager consumer: DLQ unavailable (app, Postgres e LocalStack reais)', () => {
+  const capture = createLogCapture();
+  const sqs = createTestSqsClient();
+  const urls = testQueueUrls();
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    await purgeQueue(sqs, urls.wager);
+    await purgeQueue(sqs, urls.dlq);
+    // Mesmo LocalStack, fila que não existe: o `SendMessage` à DLQ falha com `QueueDoesNotExist`.
+    const missingDlq = urls.dlq.replace(/[^/]+$/, `does-not-exist-${Bun.randomUUIDv7()}.fifo`);
+    app = await createTestApp({
+      logDestination: capture.stream,
+      sqsConsumer: { waitTimeSeconds: LONG_POLL_SECONDS, deadLetterQueueUrl: missingDlq, shutdownTimeoutMs: 10000 },
+    });
+  });
+
+  afterAll(async () => {
+    await closeAndWaitForAbortedLongPoll(app);
+    await purgeQueue(sqs, urls.wager);
+    sqs.destroy();
+  });
+
+  it('neither counts nor logs a dead-letter when the send to the DLQ fails, and keeps the message in the queue', async () => {
+    await sendRaw(sqs, urls.wager, 'not json', { groupId: Bun.randomUUIDv7() });
+
+    await capture.waitFor((line) => line.msg === 'sqs dead-letter send failed', 10000);
+
+    const metrics = await scrapeMetrics(await app.getUrl());
+    expect(sampleValue(metrics, 'sqs_consumer_messages_total', { outcome: 'dead_lettered' })).toBe(0);
+    expect(capture.lines().some((line) => line.msg === 'sqs message dead-lettered')).toBe(false);
+    const depth = await queueDepth(sqs, urls.wager);
+    expect(depth.visible + depth.inFlight).toBe(1);
+    expect(await receiveAll(sqs, urls.dlq)).toEqual([]);
   });
 });

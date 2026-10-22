@@ -13,10 +13,12 @@ import { WalletLedgerRepository } from '../wallet/application/wallet-ledger-repo
 import { WalletRepository } from '../wallet/application/wallet-repository';
 import { ReprocessPendingReferences } from './application/reprocess-pending-references';
 import { SubmitWagerTransaction } from './application/submit-wager-transaction';
+import { WagerTransactionMonitor } from './application/wager-transaction-monitor';
 import { WagerTransactionQueries } from './application/wager-transaction-queries';
 import { WagerTransactionRepository } from './application/wager-transaction-repository';
 import { DEFAULT_REFERENCE_RETRY_BACKOFF, ReferenceRetryPolicy } from './domain/reference-retry-policy';
 import { WagerApplicationPolicy } from './domain/wager-application-policy';
+import { PrometheusWagerTransactionMonitor } from './infrastructure/observability/prometheus-wager-transaction-monitor';
 import {
   PENDING_REFERENCE_WORKER_OPTIONS,
   pendingReferenceWorkerOptionsFromEnv,
@@ -32,6 +34,11 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
   providers: [
     { provide: WagerTransactionRepository, useClass: MikroOrmWagerTransactionRepository },
     {
+      provide: WagerTransactionMonitor,
+      inject: [Registry],
+      useFactory: (registry: Registry) => new PrometheusWagerTransactionMonitor(registry),
+    },
+    {
       provide: SubmitWagerTransaction,
       inject: [
         UnitOfWork,
@@ -42,6 +49,7 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
         OutboxRepository,
         Clock,
         IdGenerator,
+        WagerTransactionMonitor,
       ],
       useFactory: (
         uow: UnitOfWork,
@@ -52,6 +60,7 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
         outbox: OutboxRepository,
         clock: Clock,
         ids: IdGenerator,
+        monitor: WagerTransactionMonitor,
       ) =>
         new SubmitWagerTransaction(
           uow,
@@ -63,6 +72,7 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
           new WagerApplicationPolicy(),
           clock,
           ids,
+          monitor,
         ),
     },
     {
@@ -85,6 +95,7 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
         Clock,
         IdGenerator,
         PENDING_REFERENCE_WORKER_OPTIONS,
+        WagerTransactionMonitor,
       ],
       useFactory: (
         uow: UnitOfWork,
@@ -95,6 +106,7 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
         clock: Clock,
         ids: IdGenerator,
         options: PendingReferenceWorkerOptions,
+        monitor: WagerTransactionMonitor,
       ) =>
         new ReprocessPendingReferences(
           uow,
@@ -117,6 +129,7 @@ import { WagerTransactionsController } from './presentation/wager-transactions.c
           clock,
           ids,
           options.batchSize,
+          monitor,
         ),
     },
     {

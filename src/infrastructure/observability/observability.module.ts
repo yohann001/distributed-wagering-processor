@@ -49,7 +49,8 @@ class LoggerRootModule {}
     LoggerModule.forRootAsync({
       imports: [LoggerRootModule],
       inject: [ROOT_LOGGER],
-      useFactory: (logger: pino.Logger) => ({ pinoHttp: buildPinoHttpOptions(logger) }),
+      // Campos atribuídos pelo `LogContext.assign` também saem na linha `request completed`.
+      useFactory: (logger: pino.Logger) => ({ pinoHttp: buildPinoHttpOptions(logger), assignResponse: true }),
     }),
   ],
   providers: [{ provide: Registry, useFactory: () => buildMetricsRegistry(loadEnv()) }, LogContext],

@@ -62,6 +62,20 @@ describe('observability', () => {
       expect(capture.raw()).not.toContain(invalid);
     });
 
+    it('adds the walletId assigned by the controller to the "request completed" line', async () => {
+      const walletId = Bun.randomUUIDv7();
+      const res = await fetch(`${baseUrl}/wallets/${walletId}`, {
+        headers: { 'X-Correlation-Id': 'corr-t25-assign' },
+      });
+      expect(res.status).toBe(404);
+
+      const line = await capture.waitFor(
+        (l) => l.correlationId === 'corr-t25-assign' && l.msg === 'request completed',
+      );
+      expect(line.walletId).toBe(walletId);
+      expect(line.res).toEqual({ statusCode: 404 });
+    });
+
     it('does not log the query string', async () => {
       const res = await fetch(`${baseUrl}/does-not-exist-query?marker=query-marker-t13`, {
         headers: { 'X-Correlation-Id': 'corr-t13-query' },

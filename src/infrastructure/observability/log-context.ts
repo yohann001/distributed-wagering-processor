@@ -33,12 +33,16 @@ export class LogContext {
     return storage.getStore()?.logger ?? this.root;
   }
 
-  /** Acrescenta campos aos logs do restante do escopo atual (também dentro de uma requisição HTTP). */
+  /**
+   * Acrescenta campos aos logs do restante do escopo atual (também dentro de uma requisição HTTP) e, numa
+   * requisição HTTP, à linha `request completed`.
+   */
   assign(bindings: Partial<LogContextFields>): void {
     const store = storage.getStore();
     if (!store) {
       throw new Error('LogContext.assign called outside a log scope');
     }
     store.logger = store.logger.child(bindings);
+    store.responseLogger?.setBindings(bindings);
   }
 }

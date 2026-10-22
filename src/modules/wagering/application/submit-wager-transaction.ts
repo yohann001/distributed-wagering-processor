@@ -20,7 +20,14 @@ import {
 } from '../domain/wager-transaction';
 import { wagerPayloadHash } from './payload-hash';
 import { enqueueWagerOutcomeEvents } from './wager-outcome-events';
+import type { WagerTransactionMonitor } from './wager-transaction-monitor';
 import type { WagerTransactionRepository } from './wager-transaction-repository';
+
+/** Como uma duplicata foi reconhecida: pela inbox (mesmo `messageId`) ou pela idempotency key. */
+export enum DuplicateDetection {
+  Inbox = 'inbox',
+  IdempotencyKey = 'idempotency_key',
+}
 
 export interface InboxEntry {
   consumerName: string;
@@ -48,6 +55,8 @@ export interface SubmitWagerTransactionResult {
   /** Estado decidido: PROCESSED, REJECTED ou PENDING_REFERENCE. `balanceAfter` é o saldo observado na decisão. */
   transaction: WagerTransaction;
   idempotentReplay: boolean;
+  /** Como a duplicata foi reconhecida; `null` quando não é replay. */
+  duplicateDetectedBy: DuplicateDetection | null;
 }
 
 /**
@@ -70,10 +79,27 @@ export class SubmitWagerTransaction {
     private readonly policy: WagerApplicationPolicy,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly monitor: WagerTransactionMonitor,
   ) {}
 
   async execute(command: SubmitWagerTransactionCommand): Promise<SubmitWagerTransactionResult> {
     const payloadHash = wagerPayloadHash(command);
+    // A observação fica fora do `uow.run`: um retry do `UnitOfWork` refaz o trabalho e não pode contar duas vezes.
+    const observation = this.monitor.submissionStarted(command.inbox ? 'sqs' : 'http');
+    try {
+      const result = await this.run(command, payloadHash);
+      observation.succeeded(result);
+      return result;
+    } catch (error) {
+      observation.failed();
+      throw error;
+    }
+  }
+
+  private async run(
+    command: SubmitWagerTransactionCommand,
+    payloadHash: string,
+  ): Promise<SubmitWagerTransactionResult> {
     try {
       return await this.uow.run(() => this.submit(command, payloadHash));
     } catch (error) {
@@ -104,7 +130,7 @@ export class SubmitWagerTransaction {
           // O messageId já foi usado por outro pedido: não é entrega duplicada desta submissão.
           throw new InboxMessageConflictError(consumerName, messageId);
         }
-        return { transaction: original, idempotentReplay: true };
+        return { transaction: original, idempotentReplay: true, duplicateDetectedBy: DuplicateDetection.Inbox };
       }
     }
 
@@ -181,7 +207,7 @@ export class SubmitWagerTransaction {
       occurredAt: now,
     });
 
-    return { transaction, idempotentReplay: false };
+    return { transaction, idempotentReplay: false, duplicateDetectedBy: null };
   }
 
   private async findReplay(
@@ -206,7 +232,7 @@ export class SubmitWagerTransaction {
   ): Promise<SubmitWagerTransactionResult> {
     // Um messageId novo que carrega uma key já processada é registrado, para a reentrega dele ser deduplicada.
     await this.recordInbox(command, payloadHash, now);
-    return { transaction: existing, idempotentReplay: true };
+    return { transaction: existing, idempotentReplay: true, duplicateDetectedBy: DuplicateDetection.IdempotencyKey };
   }
 
   private async recordInbox(

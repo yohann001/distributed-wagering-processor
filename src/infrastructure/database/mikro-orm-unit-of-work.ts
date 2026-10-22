@@ -1,4 +1,4 @@
-import { DriverException } from '@mikro-orm/core';
+import { ConnectionException, DriverException } from '@mikro-orm/core';
 import type { EntityManager } from '@mikro-orm/postgresql';
 
 import type { Env } from '../../config/env';
@@ -55,6 +55,42 @@ export function classifyConcurrencyConflict(error: unknown): ConcurrencyConflict
   }
   const reason = SQLSTATE_REASONS[code];
   return reason === undefined ? null : new ConcurrencyConflictError(reason, `SQLSTATE ${code}`);
+}
+
+const TRANSIENT_SQLSTATES: ReadonlySet<string> = new Set(['57P01', '57P02', '57P03']);
+const TRANSIENT_SQLSTATE_CLASSES: readonly string[] = ['08', '53'];
+const TRANSIENT_SOCKET_CODES: ReadonlySet<string> = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+]);
+
+/**
+ * Falha de infraestrutura que reenviar o mesmo pedido pode resolver: conflito de concorrência, banco
+ * inacessível ou desligando (classe 08, 53 e 57P01-57P03), erro de socket ou espera esgotada por conexão do
+ * pool. Vale para o `DriverException` cru (leituras fora do `UnitOfWork`) e para o `DatabaseError` já
+ * sanitizado: os dois expõem o SQLSTATE em `code`.
+ */
+export function isTransientDatabaseFailure(error: unknown): boolean {
+  if (classifyConcurrencyConflict(error) !== null || error instanceof ConnectionException) {
+    return true;
+  }
+  if (error instanceof Error && error.name === 'KnexTimeoutError') {
+    return true;
+  }
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+  const { code } = error;
+  return (
+    typeof code === 'string' &&
+    (TRANSIENT_SQLSTATES.has(code) ||
+      TRANSIENT_SOCKET_CODES.has(code) ||
+      TRANSIENT_SQLSTATE_CLASSES.some((sqlstateClass) => code.startsWith(sqlstateClass)))
+  );
 }
 
 /**

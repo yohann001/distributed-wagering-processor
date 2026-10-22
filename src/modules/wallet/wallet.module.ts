@@ -16,10 +16,12 @@ import { WalletRepository } from './application/wallet-repository';
 import { PrometheusReconciliationMonitor } from './infrastructure/observability/prometheus-reconciliation-monitor';
 import { MikroOrmWalletLedgerRepository } from './infrastructure/persistence/mikro-orm-wallet-ledger-repository';
 import { MikroOrmWalletRepository } from './infrastructure/persistence/mikro-orm-wallet-repository';
+import { WalletsController } from './presentation/wallets.controller';
 
 // Global como o DatabaseModule: os casos de uso de um módulo injetam as portas de outro sem ciclo de imports entre módulos.
 @Global()
 @Module({
+  controllers: [WalletsController],
   providers: [
     { provide: WalletRepository, useClass: MikroOrmWalletRepository },
     { provide: WalletLedgerRepository, useClass: MikroOrmWalletLedgerRepository },

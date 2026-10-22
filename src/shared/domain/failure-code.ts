@@ -25,6 +25,9 @@ export enum FailureCode {
   WalletPlayerMismatch = 'WALLET_PLAYER_MISMATCH',
   WalletAlreadyExists = 'WALLET_ALREADY_EXISTS',
 
+  // Consulta
+  TransactionNotFound = 'TRANSACTION_NOT_FOUND',
+
   // Saldo
   InsufficientFunds = 'INSUFFICIENT_FUNDS',
   ReversalInsufficientFunds = 'REVERSAL_INSUFFICIENT_FUNDS',
@@ -53,6 +56,7 @@ export const FAILURE_ACTIONS: Readonly<Record<FailureCode, FailureAction>> = Obj
   [FailureCode.WalletNotFound]: FailureAction.FixPayload,
   [FailureCode.WalletPlayerMismatch]: FailureAction.FixPayload,
   [FailureCode.WalletAlreadyExists]: FailureAction.GiveUp,
+  [FailureCode.TransactionNotFound]: FailureAction.FixPayload,
   [FailureCode.InsufficientFunds]: FailureAction.GiveUp,
   [FailureCode.ReversalInsufficientFunds]: FailureAction.GiveUp,
   [FailureCode.ReferenceNotFound]: FailureAction.FixPayload,

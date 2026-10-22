@@ -158,7 +158,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 4 — Borda HTTP e infraestrutura de entrada
 
-### [ ] T19 — API HTTP e mapeamento de status
+### [x] T19 — API HTTP e mapeamento de status
 - **Descrição:** Controllers para `POST /wallets`, `GET /wallets/:walletId`, `GET /wallets/:walletId/ledger`, `POST /wagering/transactions` (header `Idempotency-Key` obrigatório), `GET /wagering/transactions/:transactionId`, `GET /providers/:providerId/wagering/transactions/:externalTransactionId` e `POST /wallets/:walletId/reconciliation`. DTOs validados com zod. Rejeitar `OPENING`. Antes do hash e da key, normalizar ids UUID para minúsculas e recusar `:` em `providerId`, porque `defaultIdempotencyKey` usa `:` como separador. Filtro global de exceções com mapeamento **consistente** que distinga: payload inválido, conflito de idempotência, rejeição de negócio, aceite com processamento pendente, falha transitória de infraestrutura (com `Retry-After`) e não encontrado.
 - **Critério de aceite:** testes e2e (app real + Postgres) para cada endpoint e cada classe de resposta. Tabela de status HTTP documentada no `ARCHITECTURE.md`. Formato de `Money` sempre `{ amount: string, currency }`.
 - **Seção:** §9, §6.3 (OPENING interno)

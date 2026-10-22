@@ -12,9 +12,11 @@ import { WagerTransactionQueries } from './application/wager-transaction-queries
 import { WagerTransactionRepository } from './application/wager-transaction-repository';
 import { WagerApplicationPolicy } from './domain/wager-application-policy';
 import { MikroOrmWagerTransactionRepository } from './infrastructure/persistence/mikro-orm-wager-transaction-repository';
+import { WagerTransactionsController } from './presentation/wager-transactions.controller';
 
 @Global()
 @Module({
+  controllers: [WagerTransactionsController],
   providers: [
     { provide: WagerTransactionRepository, useClass: MikroOrmWagerTransactionRepository },
     {

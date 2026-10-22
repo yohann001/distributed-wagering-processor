@@ -29,6 +29,7 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 | `WALLET_NOT_FOUND` | `FIX_PAYLOAD` | `walletId` inexistente. | `REJECTED` persistido |
 | `WALLET_PLAYER_MISMATCH` | `FIX_PAYLOAD` | A wallet pertence a outro `playerId`. | `REJECTED` persistido |
 | `WALLET_ALREADY_EXISTS` | `GIVE_UP` | Já existe wallet para `playerId + currency` (§6.2). | Resposta síncrona |
+| `TRANSACTION_NOT_FOUND` | `FIX_PAYLOAD` | Consulta de transação (por id interno ou por `providerId + externalTransactionId`) que não existe (T19). Nunca persistido. | Resposta síncrona (404) |
 | `INSUFFICIENT_FUNDS` | `GIVE_UP` | `BET` maior que o saldo. | `REJECTED` persistido |
 | `REVERSAL_INSUFFICIENT_FUNDS` | `GIVE_UP` | Reversão (`ROLLBACK` de `WIN`/`REFUND`) deixaria o saldo negativo (§7 regra 9). Exige ação operacional, por isso é distinto de `INSUFFICIENT_FUNDS`. | `REJECTED` persistido |
 | `REFERENCE_NOT_FOUND` | `FIX_PAYLOAD` | A referência não chegou dentro do limite de `PENDING_REFERENCE` (§7.1). Corrigir o id ou enviar a original antes e reenviar a reversão com nova key. | `REJECTED` persistido |
@@ -50,6 +51,7 @@ A classificação é sobre reenviar **aquele** request. Por idempotência, reenv
 - transação: `InvalidTransactionStateError`, `KindNotAllowedError`, `ReferenceRequiredError`, `InvalidWagerTransactionError`, `IdempotencyConflictError`, `WagerTransactionAlreadyExistsError`;
 - mensageria: `InvalidIntegrationEventError`, `InvalidInboxMessageError`, `InvalidOutboxMessageError`, `InboxMessageConflictError`, `InboxMessageAlreadyExistsError`;
 - aplicação: `ConcurrencyConflictError` (`src/shared/application/unit-of-work.ts`) e `InvalidQueryError` (`src/shared/application/invalid-query-error.ts`).
+- borda HTTP: `InvalidRequestError` (`INVALID_PAYLOAD` + lista de `issues`) e `ResourceNotFoundError` (`WALLET_NOT_FOUND` ou `TRANSACTION_NOT_FOUND`), em `src/infrastructure/http/http-errors.ts`.
 
  Regras de negócio não lançam exceção para o controller: viram `REJECTED` com o código correspondente. O mapeamento para HTTP (T19) e para ack, retry e DLQ (T22) parte desta classificação.
 
@@ -372,6 +374,70 @@ Código: caso de uso `ReconcileWallet` (`src/modules/wallet/application/reconcil
 - **`LogContext.current()`.** Devolve o logger do escopo atual (requisição HTTP ou `run`), com `correlationId` e demais campos, ou o `ROOT_LOGGER` do app fora de escopo. Existe para o adapter logar no contexto certo sem depender do `PinoLogger.root`, que seria o do primeiro app do processo (ver "Observabilidade").
 - **`null` é "não encontrada".** A wallet inexistente devolve `null`, sem tocar a métrica; o 404 é da T19.
 - **Fora do escopo.** Rota `POST /wallets/:walletId/reconciliation`, DTO e 404 (T19); reconciliar todas as wallets em lote ou por job; conferir a cadeia `balanceBefore/After` e a `version` (isso fica em `assertWalletConsistent`, nos testes; o caso de uso compara saldo materializado com soma do ledger, como pede a task); contador de reconciliações consistentes ou gauge (a T25 revisa a cobertura de métricas).
+
+## API HTTP (§9)
+
+Código: controllers e DTOs em `src/modules/wallet/presentation/` (`wallets.controller.ts`, `wallet-http.schemas.ts`) e `src/modules/wagering/presentation/` (`wager-transactions.controller.ts`, `wager-transaction-http.schemas.ts`); blocos de zod, erros, mapeamento e filtro global em `src/infrastructure/http/` (`request-schemas.ts`, `http-errors.ts`, `http-error-mapping.ts`, `http-exception-filter.ts`, `correlation-id.decorator.ts`, `http.module.ts`); `isTransientDatabaseFailure` em `src/infrastructure/database/mikro-orm-unit-of-work.ts`. Testes: `test/unit/infrastructure/http/` (`http-error-mapping.spec.ts`, `request-schemas.spec.ts`), `test/unit/infrastructure/database/is-transient-database-failure.spec.ts`, `test/integration/modules/wallet/presentation/wallets-http.spec.ts` e `test/integration/modules/wagering/presentation/wager-transactions-http.spec.ts` (app real + Postgres real, via `fetch`).
+
+### Rotas
+
+| Rota | Sucesso | Observação |
+|---|---|---|
+| `POST /wallets` | 201 `{ id, playerId, balance, version }` | Corpo `{ playerId, initialBalance }`. |
+| `GET /wallets/:walletId` | 200, mesmo corpo | |
+| `GET /wallets/:walletId/ledger?limit&cursor` | 200 `{ items, nextCursor }` | Mais recente primeiro; `limit` 1..100. |
+| `POST /wallets/:walletId/reconciliation` | 200 `{ walletId, storedBalance, calculatedBalance, difference, consistent, checkedEntries }` | Nunca corrige (ver "Reconciliação"). |
+| `POST /wagering/transactions` | 200, 202 ou 422 `{ transactionId, status, balance, failureCode, idempotentReplay }` | Header `Idempotency-Key` obrigatório. |
+| `GET /wagering/transactions/:transactionId` | 200, visão completa (sem `payloadHash`) | |
+| `GET /providers/:providerId/wagering/transactions/:externalTransactionId` | 200, mesma visão | |
+
+Todo valor monetário de resposta é `{ "amount": "25.00", "currency": "BRL" }` (`Money.toJSON()`), nunca um número JSON. As datas saem em ISO 8601.
+
+### Tabela de status HTTP
+
+| Classe | HTTP | `failureCode` | Quando |
+|---|---|---|---|
+| Sucesso | 200 / 201 | (sem `failureCode`; `null` na submissão) | `PROCESSED` na submissão e no replay; leituras; 201 só em `POST /wallets`. |
+| Aceite com processamento pendente | 202 | (`failureCode` `null`) | Submissão `PENDING_REFERENCE`: a referência ainda não chegou (§7.1). Replay também devolve 202. |
+| Payload inválido | 400 | `INVALID_PAYLOAD`, `INVALID_MONEY`, `KIND_NOT_ALLOWED`, `REFERENCE_REQUIRED` (e `CURRENCY_MISMATCH`, se lançado como exceção) | Corpo, rota, query ou header fora do contrato; JSON malformado; `kind: OPENING`; `providerId` com `:`; `REFUND`/`ROLLBACK` sem referência. Nada é gravado. |
+| Não encontrado | 404 | `WALLET_NOT_FOUND`, `TRANSACTION_NOT_FOUND`; rota inexistente: `INVALID_PAYLOAD` | Wallet ou transação consultada não existe. |
+| Conflito | 409 | `IDEMPOTENCY_CONFLICT`, `WALLET_ALREADY_EXISTS` | Mesma key (ou mesmo id externo) com outro payload; wallet duplicada para `playerId + currency`. Os dois códigos são distintos. |
+| Rejeição de negócio | 422 | o `failureCode` persistido: `INSUFFICIENT_FUNDS`, `REVERSAL_INSUFFICIENT_FUNDS`, `WALLET_NOT_FOUND`, `WALLET_PLAYER_MISMATCH`, `CURRENCY_MISMATCH`, `REFERENCE_*`, `INVALID_REFERENCE_KIND`, `ALREADY_REVERSED` | Submissão que terminou `REJECTED`. O status vem do estado da transação, não de exceção. Replay também devolve 422. |
+| Falha transitória de infraestrutura | 503 + `Retry-After: 1` | `TRANSIENT_FAILURE` (`action: RETRY`) | Lock timeout, deadlock, serialization esgotados; banco ou pool indisponível; corrida de inserção que escapou. Nada foi gravado: reenviar o mesmo request (mesma key) é seguro. |
+| Erro interno | 500 | `INVARIANT_VIOLATION`, `PERMANENT_FAILURE` | Erro de programação ou exceção não prevista; mensagem sempre `Internal error`. |
+
+### Corpo de erro
+
+Todo erro tem o mesmo formato, montado pelo `HttpExceptionFilter` a partir de uma única função (`mapErrorToHttp`) e de uma única tabela `FailureCode → status` (`HTTP_STATUS_BY_FAILURE_CODE`, exaustiva: um código novo não compila até ser mapeado):
+
+```json
+{ "failureCode": "INVALID_PAYLOAD", "action": "FIX_PAYLOAD", "message": "Invalid request", "issues": [{ "path": "body.playerId", "message": "..." }] }
+```
+
+`issues` só existe em `INVALID_PAYLOAD` vindo do zod; `path` leva a origem na frente (`body.`, `params.`, `query.`, `headers.`). `action` vem da classificação do §7.2.
+
+### Normalização antes do hash
+
+- Todo id em formato de UUID (`walletId`, `transactionId`, e também `playerId`, `externalTransactionId`, `referenceExternalTransactionId` quando têm esse formato) vai para minúsculas **antes** do hash e da key. O mesmo pedido enviado com UUID em maiúsculas e depois em minúsculas, sob a mesma key, é replay e não conflito. Ids que não são UUID ficam como vieram (`Round-ABC` continua `Round-ABC`).
+- Ids de negócio (`providerId`, `externalTransactionId`, `playerId`, `roundId`, `gameId`, `referenceExternalTransactionId`) têm de 1 a 128 caracteres, sem espaço nas pontas e sem caractere de controle. Isso fecha a porta para `InvalidWagerTransactionError` (`INVARIANT_VIOLATION`, 500), que o domínio lança para valor em branco e que não pode ser alcançável pela API.
+- `providerId` recusa `:`, porque `defaultIdempotencyKey` usa `:` como separador e o id interno da abertura (`internal:wallet-opening`) não pode colidir com nenhum provedor.
+- `Idempotency-Key` é opaco: usado como recebido, 1 a 255 caracteres ASCII visíveis. Ausente ou fora disso: 400 com `issues[].path = headers.idempotency-key`, antes de qualquer trabalho com o corpo.
+- `money` e `initialBalance` não passam pelo zod: entram como `unknown` e `Money.from` os valida, para que todo problema de dinheiro (número no lugar de string, `10.5`, negativo, moeda inválida) tenha um só código, `INVALID_MONEY`.
+- `kind: "OPENING"` é recusado com `KIND_NOT_ALLOWED` antes de qualquer acesso ao banco; um `kind` desconhecido falha o `z.enum` com `INVALID_PAYLOAD`.
+- Campos desconhecidos no corpo são descartados pelo zod (não entram no hash).
+- `wagerTransactionPayloadSchema` é compartilhado com o consumer SQS (T22), para as duas bordas normalizarem do mesmo jeito.
+
+### Decisões
+
+- **422 para `REJECTED`, 202 para `PENDING_REFERENCE`, 200 para `PROCESSED` (decisão do desenvolvedor).** O status da submissão sai do estado decidido; o replay devolve o mesmo status e o mesmo corpo, só com `idempotentReplay: true` e o `balance` observado na época (§7 regra 7). Os `GET` de leitura respondem sempre 200 para uma transação existente, qualquer que seja o estado.
+- **`WALLET_NOT_FOUND` é 422 na submissão e 404 na consulta.** Na submissão a ausência da wallet é uma rejeição de negócio persistida (`REJECTED`, auditável); no `GET` é um recurso que não existe.
+- **`TRANSACTION_NOT_FOUND` (decisão do desenvolvedor).** Código novo, `FIX_PAYLOAD`, só para consultas de transação; as rotas de wallet continuam com `WALLET_NOT_FOUND`. A mensagem do 404 cita só o tipo do recurso, nunca o id.
+- **Rota inexistente: 404 com `INVALID_PAYLOAD`** (decisão do desenvolvedor), e JSON malformado: 400 com `INVALID_PAYLOAD`. A mensagem do framework nunca é repetida: ela pode citar o corpo recebido. O corpo vem fixo (`Malformed request`, `Route not found`).
+- **Todo erro devolve `X-Correlation-Id`, inclusive o do `body-parser`.** O parser do Express roda antes do `pino-http`, então num JSON malformado `req.id` não existe e o header não foi definido. Nesse caso o filtro resolve o id sozinho (o `X-Correlation-Id` recebido, se válido, ou um UUIDv7 novo) e o devolve. Esse caminho não tem linha de log "request completed".
+- **503 com `Retry-After: 1`.** `isTransientDatabaseFailure` cobre `ConcurrencyConflictError`, SQLSTATE das classes 08 e 53 e `57P01`-`57P03`, erros de socket (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, `ENOTFOUND`, `EAI_AGAIN`), `ConnectionException` do MikroORM e `KnexTimeoutError` (espera por conexão do pool). Vale para o `DriverException` cru das leituras fora do `UnitOfWork` e para o `DatabaseError` já sanitizado. O consumer SQS (T22) reutiliza o classificador.
+- **5xx e 503 são logados, sanitizados.** O filtro loga `failureCode`, `statusCode` e o erro (`DriverException` cru vira `DatabaseError` antes, sem SQL nem valores), sem corpo nem headers; 503 em `warn`, 500 em `error`. Erros 4xx não geram log de erro. O `LoggerErrorInterceptor` do nestjs-pino não é usado porque o filtro já loga.
+- **Sem camada de serviço nos controllers.** Cada rota valida a entrada com zod (`parseRequest`), chama o caso de uso ou serviço de consulta e mapeia o resultado; os casos de uso não mudaram.
+- **Fora do escopo.** Autenticação (T20), `/health/ready` (T21), consumer SQS (T22), métricas por status (T25), OpenAPI.
 
 ## Suporte de testes (§13)
 

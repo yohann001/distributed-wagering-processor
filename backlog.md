@@ -95,7 +95,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §5.9, §5.5, §4 (Migrations), §6.2, §6.4, §6.5, §7 regra 4
 - **Depende de:** T03–T09
 
-### [ ] T11 — Mapeamento ORM e repositórios
+### [x] T11 — Mapeamento ORM e repositórios
 - **Descrição:** Mapeamento MikroORM em `infrastructure/` (EntitySchema ou entidades de persistência com mapper; decidir e justificar), com o domínio sem decorators. `numeric` lido como **string** e reidratado em `Money` via `rehydrate`. Portas de repositório em `application/` e adapters MikroORM. Registro dos módulos no `DatabaseModule`.
 - **Critério de aceite:** teste de integração round-trip (salvar → ler) de cada agregado/entidade, preservando `Money` exato (ex.: `"0.10"`, `"99999999.99"`). Nenhum `number` no caminho do dinheiro. Justificativa do ORM e do mapeamento do `Money` no `ARCHITECTURE.md`.
 - **Seção:** §4 (ORM), §6.0, §6.1 (persistência)

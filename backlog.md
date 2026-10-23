@@ -232,7 +232,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §13 (Integração: inbox e redelivery; retry e DLQ), §10
 - **Depende de:** T22, T25
 
-### [ ] T28 — Integração: publishers concorrentes e recuperação após reinicialização
+### [x] T28 — Integração: publishers concorrentes e recuperação após reinicialização
 - **Descrição:** Dois publishers sobre a mesma outbox. Reinício da aplicação com outbox e inbox pendentes, que precisam ser retomados.
 - **Critério de aceite:** todos os eventos publicados pelo menos uma vez, sem publicação paralela do mesmo evento. Após o restart, pendências concluídas e estado consistente.
 - **Seção:** §13 (Integração: publishers concorrentes; recuperação após reinicialização), §11

@@ -29,9 +29,10 @@ export function testQueueUrls(): { wager: string; dlq: string; events: string } 
 
 /**
  * Cliente SQS real que registra o `MessageDeduplicationId` (o `eventId`) de cada entrada de `SendMessageBatch`.
- * Só observa o cliente real, não o substitui: o envio segue para o LocalStack.
+ * Só observa o cliente real, não o substitui: o envio segue para o LocalStack. `sendDelayMs` atrasa cada envio,
+ * alongando o tempo em que o publisher segura as linhas do claim.
  */
-export function countingSqsClient(): { client: SQSClient; sentEventIds: string[] } {
+export function countingSqsClient(opts: { sendDelayMs?: number } = {}): { client: SQSClient; sentEventIds: string[] } {
   const client = createTestSqsClient();
   const sentEventIds: string[] = [];
   client.middlewareStack.add(
@@ -42,6 +43,9 @@ export function countingSqsClient(): { client: SQSClient; sentEventIds: string[]
           if (entry.MessageDeduplicationId !== undefined) {
             sentEventIds.push(entry.MessageDeduplicationId);
           }
+        }
+        if (opts.sendDelayMs) {
+          await Bun.sleep(opts.sendDelayMs);
         }
       }
       return next(args);
@@ -54,16 +58,25 @@ export function countingSqsClient(): { client: SQSClient; sentEventIds: string[]
 /**
  * Cliente SQS real em que a próxima chamada do comando armado falha uma vez com `InjectedFault`, antes de sair
  * para o LocalStack. Só acrescenta um ponto de falha: toda outra chamada, e as seguintes do mesmo comando,
- * vão para o LocalStack.
+ * vão para o LocalStack. `failAlways` faz toda chamada do comando falhar enquanto o cliente viver.
  */
-export function faultySqsClient(): { client: SQSClient; failNext(commandName: string): void } {
+export function faultySqsClient(): {
+  client: SQSClient;
+  failNext(commandName: string): void;
+  failAlways(commandName: string): void;
+} {
   const client = createTestSqsClient();
   let armed: string | undefined;
+  const alwaysFailing = new Set<string>();
   client.middlewareStack.add(
     (next, context) => async (args) => {
-      if (armed !== undefined && context.commandName === armed) {
+      const { commandName } = context;
+      if (commandName !== undefined && alwaysFailing.has(commandName)) {
+        throw new InjectedFault(commandName);
+      }
+      if (armed !== undefined && commandName === armed) {
         armed = undefined;
-        throw new InjectedFault(context.commandName);
+        throw new InjectedFault(commandName);
       }
       return next(args);
     },
@@ -73,6 +86,9 @@ export function faultySqsClient(): { client: SQSClient; failNext(commandName: st
     client,
     failNext(commandName) {
       armed = commandName;
+    },
+    failAlways(commandName) {
+      alwaysFailing.add(commandName);
     },
   };
 }

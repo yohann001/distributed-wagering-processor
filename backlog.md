@@ -284,7 +284,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 9 — Documentação final
 
-### [ ] T33 — `ARCHITECTURE.md`
+### [x] T33 — `ARCHITECTURE.md`
 - **Descrição:** Consolidar as decisões e justificativas:
   - escolha do MikroORM, mapeamento do `Money` e estratégia transacional (§4);
   - estratégia de concorrência (§8);

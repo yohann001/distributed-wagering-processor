@@ -238,7 +238,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §13 (Integração: publishers concorrentes; recuperação após reinicialização), §11
 - **Depende de:** T23
 
-### [ ] T29 — Concorrência: mesma aposta 50×, cenário §8 e wallets distintas
+### [x] T29 — Concorrência: mesma aposta 50×, cenário §8 e wallets distintas
 - **Descrição:**
   1. A mesma aposta enviada 50× em paralelo (HTTP e/ou SQS).
   2. Saldo 100.00 com duas apostas de 80.00 simultâneas.

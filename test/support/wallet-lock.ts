@@ -10,10 +10,17 @@ function deferred() {
 
 /** Segura o `FOR UPDATE` da wallet até `release()`: quem disputa o lock espera ou, com `lockTimeoutMs` curto, falha com `LOCK_TIMEOUT`. */
 export async function holdWalletLock(orm: MikroORM, walletId: string): Promise<{ release: () => Promise<void> }> {
+  return holdWalletLocks(orm, [walletId]);
+}
+
+/** Segura o `FOR UPDATE` de várias wallets numa só transação (uma conexão) até `release()`: quem disputa qualquer uma delas espera. */
+export async function holdWalletLocks(orm: MikroORM, walletIds: string[]): Promise<{ release: () => Promise<void> }> {
   const locked = deferred();
   const released = deferred();
   const owner = orm.em.fork().transactional(async (em) => {
-    await em.execute('select id from wallets where id = ? for update', [walletId]);
+    for (const walletId of walletIds) {
+      await em.execute('select id from wallets where id = ? for update', [walletId]);
+    }
     locked.resolve();
     await released.promise;
   });

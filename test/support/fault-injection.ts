@@ -95,3 +95,40 @@ export async function installCommitFault(orm: MikroORM, walletId: string): Promi
     await cleanup.execute(`drop function if exists ${name}()`);
   };
 }
+
+/** Prefixo do trigger e da função de `installStatusChangeFault`. */
+export const STATUS_CHANGE_FAULT_PREFIX = 'test_status_change_fault_';
+
+/**
+ * Faz falhar, sempre, a mudança de status de uma transação: trigger `before update` real em `wager_transactions`,
+ * filtrado pelo id, que lança quando `status` muda. Um `UPDATE` que não muda o status (o reagendamento do worker de
+ * PENDING_REFERENCE) passa. Devolve a função que remove trigger e função; quem instala deve chamá-la num `finally`.
+ */
+export async function installStatusChangeFault(orm: MikroORM, transactionId: string): Promise<() => Promise<void>> {
+  if (!UUID.test(transactionId)) {
+    throw new Error('installStatusChangeFault expects a lowercase UUID transactionId: it is interpolated into DDL');
+  }
+  const name = `${STATUS_CHANGE_FAULT_PREFIX}${Bun.randomUUIDv7().replaceAll('-', '')}`;
+  const em = orm.em.fork();
+
+  await em.execute(`
+    create function ${name}() returns trigger language plpgsql as $$
+    begin
+      raise exception 'injected status change fault' using errcode = 'P0001';
+    end;
+    $$
+  `);
+  await em.execute(`
+    create trigger ${name}
+      before update on wager_transactions
+      for each row
+      when (old.id = '${transactionId}'::uuid and new.status is distinct from old.status)
+      execute function ${name}()
+  `);
+
+  return async () => {
+    const cleanup = orm.em.fork();
+    await cleanup.execute(`drop trigger if exists ${name} on wager_transactions`);
+    await cleanup.execute(`drop function if exists ${name}()`);
+  };
+}

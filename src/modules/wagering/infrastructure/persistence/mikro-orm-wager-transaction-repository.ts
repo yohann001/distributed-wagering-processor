@@ -128,4 +128,16 @@ export class MikroOrmWagerTransactionRepository extends WagerTransactionReposito
       throw new Error(`Pending reference transaction ${id} not found for retry`);
     }
   }
+
+  async deferFailedPendingReference(id: string, fromAttempts: number, nextAttemptAt: Date): Promise<boolean> {
+    assertInTransaction(this.em, 'WagerTransactionRepository.deferFailedPendingReference');
+    // Sem claim: se outra instância travou a linha, o UPDATE espera o commit dela e reavalia o WHERE, que deixa de
+    // casar quando ela decidiu ou reagendou a transação.
+    const affected = await this.em.nativeUpdate(
+      WagerTransactionSchema,
+      { id, status: WagerTransactionStatus.PendingReference, referenceAttempts: fromAttempts },
+      { referenceAttempts: fromAttempts + 1, nextReferenceAttemptAt: nextAttemptAt },
+    );
+    return affected === 1;
+  }
 }

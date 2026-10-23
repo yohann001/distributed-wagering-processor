@@ -40,4 +40,12 @@ export class ReferenceRetryPolicy {
     }
     return { kind: 'retry', nextAttemptAt: new Date(now.getTime() + this.backoff.delayMs(attempt)) };
   }
+
+  /**
+   * Reavaliação que lançou antes de decidir: conta como tentativa e é sempre reagendada com o mesmo backoff, mesmo no
+   * limite. Sem decisão não há como rejeitar; quem esgota é a próxima reavaliação que rodar até o fim.
+   */
+  afterFailedAttempt(attempt: number, now: Date): Date {
+    return new Date(now.getTime() + this.backoff.delayMs(attempt));
+  }
 }

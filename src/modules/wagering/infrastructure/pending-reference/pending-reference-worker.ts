@@ -85,7 +85,7 @@ export class PendingReferenceWorker {
     }
   }
 
-  private record({ transaction, outcome, attempt }: ReprocessedPendingReference): void {
+  private record({ transaction, outcome, attempt, errorName }: ReprocessedPendingReference): void {
     this.reprocessed.inc({ outcome });
     const fields = {
       transactionId: transaction.id,
@@ -93,10 +93,17 @@ export class PendingReferenceWorker {
       providerId: transaction.providerId,
       outcome,
       attempt,
-      ...(transaction.failureCode === undefined ? {} : { failureCode: transaction.failureCode }),
+      // Em `Failed` o estado em memória não vale (o banco foi desfeito): só a identidade e o erro.
+      ...(outcome === PendingReferenceOutcome.Failed || transaction.failureCode === undefined
+        ? {}
+        : { failureCode: transaction.failureCode }),
+      ...(errorName === undefined ? {} : { errorName }),
     };
     const logger = this.logContext.current();
     switch (outcome) {
+      case PendingReferenceOutcome.Failed:
+        logger.error(fields, 'pending reference reprocessing failed');
+        return;
       case PendingReferenceOutcome.Processed:
       case PendingReferenceOutcome.Rejected:
         logger.info(fields, 'pending reference reprocessed');

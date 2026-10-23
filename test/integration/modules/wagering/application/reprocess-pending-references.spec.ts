@@ -21,6 +21,7 @@ import { FailureCode } from '../../../../../src/shared/domain/failure-code';
 import { Money } from '../../../../../src/shared/domain/money';
 import { createTestApp } from '../../../../support/create-test-app';
 import { resetDatabase } from '../../../../support/database';
+import { installStatusChangeFault } from '../../../../support/fault-injection';
 import { newProviderId, openWalletWithBalance } from '../../../../support/fixtures';
 import { present } from '../../../../support/orm-context';
 import { waitFor } from '../../../../support/sqs';
@@ -363,6 +364,52 @@ describe('ReprocessPendingReferences (Postgres real)', () => {
         release.resolve();
         await limitOne.close();
       }
+    });
+  });
+
+  describe('a pending transaction that keeps failing', () => {
+    it('defers the failing row and still reprocesses the next ones in the same cycle', async () => {
+      const scenario = await openScenario('100.00');
+      // Criada primeiro: é a pendente vencida mais antiga, a primeira do claim.
+      const failing = await refundThenBet(scenario, '30.00');
+      const healthy = await refundThenBet(scenario, '20.00');
+      const removeFault = await installStatusChangeFault(orm, failing.pending.id);
+
+      try {
+        const { reprocessed } = await reprocess.execute(Bun.randomUUIDv7());
+
+        expect(reprocessed.map((item) => [item.transaction.id, item.outcome])).toEqual([
+          [failing.pending.id, PendingReferenceOutcome.Failed],
+          [healthy.pending.id, PendingReferenceOutcome.Processed],
+        ]);
+        expect(reprocessed[0]).toMatchObject({ attempt: 1, errorName: 'DatabaseError' });
+        expect(await transactionRow(failing.pending.id)).toMatchObject({
+          status: 'PENDING_REFERENCE',
+          reference_attempts: 1,
+          scheduled_in_the_future: true,
+        });
+        expect(await ledgerOf(failing.pending.id)).toEqual([]);
+        expect(await eventTypesOf(failing.pending.id)).toEqual([PENDING_REFERENCE]);
+        expect(await transactionRow(healthy.pending.id)).toMatchObject({ status: 'PROCESSED', balance_after: '70.00' });
+        // Adiada com backoff: o ciclo seguinte ainda não a enxerga.
+        expect((await reprocess.execute(Bun.randomUUIDv7())).reprocessed).toEqual([]);
+      } finally {
+        await removeFault();
+      }
+
+      const [retried] = await reprocessWhenDue(reprocess);
+      expect(retried).toMatchObject({ outcome: PendingReferenceOutcome.Processed, attempt: 2 });
+      expect(retried?.transaction.id).toBe(failing.pending.id);
+      expect(await transactionRow(failing.pending.id)).toMatchObject({
+        status: 'PROCESSED',
+        reference_transaction_id: failing.bet.id,
+        balance_after: '100.00',
+      });
+      expect(await ledgerOf(failing.pending.id)).toEqual([
+        { direction: 'CREDIT', amount: '30.00', balance_before: '70.00', balance_after: '100.00' },
+      ]);
+      expect(await eventTypesOf(failing.pending.id)).toEqual([PENDING_REFERENCE, PROCESSED, BALANCE_CHANGED]);
+      await assertWalletConsistent(orm, scenario.walletId);
     });
   });
 

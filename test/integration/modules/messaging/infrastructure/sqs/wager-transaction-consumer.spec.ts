@@ -243,6 +243,7 @@ describe('SQS wager consumer (app, Postgres e LocalStack reais)', () => {
     // Valores financeiros e o corpo nunca vão para o log (§12).
     expect(JSON.stringify(line)).not.toContain('25.00');
     await waitForEmptyQueue(sqs, urls.wager);
+    await assertWalletConsistent(orm, scenario.walletId);
   });
 
   it('applies the effect once when the same message is delivered twice, and acks both deliveries', async () => {

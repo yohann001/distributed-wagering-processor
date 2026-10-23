@@ -10,7 +10,7 @@ import { WagerDecision, type WagerApplicationPolicy } from '../domain/wager-appl
 import type { WagerTransaction } from '../domain/wager-transaction';
 import { enqueueWagerOutcomeEvents, type WagerEventContext } from './wager-outcome-events';
 import type { WagerTransactionMonitor } from './wager-transaction-monitor';
-import type { WagerTransactionRepository } from './wager-transaction-repository';
+import type { ClaimedPendingReference, WagerTransactionRepository } from './wager-transaction-repository';
 
 export enum PendingReferenceOutcome {
   /** A referência chegou e a transação foi aplicada (inclui LOSS, que só registra). */
@@ -21,14 +21,25 @@ export enum PendingReferenceOutcome {
   Retried = 'retried',
   /** Limite de reavaliações esgotado: `REJECTED` com `REFERENCE_NOT_FOUND` ou `REFERENCE_NOT_PROCESSED`. */
   Expired = 'expired',
+  /** A reavaliação lançou e foi desfeita: a transação segue pendente, adiada com backoff, e o lote continua. */
+  Failed = 'failed',
 }
 
 export interface ReprocessedPendingReference {
+  /** Em `Failed`, só a identidade vale: o estado em memória pode ter mudado antes do erro, e o banco foi desfeito. */
   transaction: WagerTransaction;
   outcome: PendingReferenceOutcome;
   /** Reavaliações contadas até aqui, incluindo esta. */
   attempt: number;
+  /** Só em `Failed`: o nome do erro, nunca a mensagem (pode trazer SQL com valores, §12). */
+  errorName?: string;
 }
+
+const DECIDED: ReadonlySet<PendingReferenceOutcome> = new Set([
+  PendingReferenceOutcome.Processed,
+  PendingReferenceOutcome.Rejected,
+  PendingReferenceOutcome.Expired,
+]);
 
 export interface ReprocessPendingReferencesResult {
   reprocessed: readonly ReprocessedPendingReference[];
@@ -51,6 +62,9 @@ export interface ReprocessPendingReferencesResult {
  *   entra na outbox. O evento de pendência já saiu na submissão e não se repete a cada reavaliação.
  * - Cada decisão (`Processed`, `Rejected`, `Expired`) é avisada ao `WagerTransactionMonitor` depois do commit da
  *   transação dela, fora do `uow.run`, para um retry do `UnitOfWork` não contar duas vezes.
+ * - Uma pendente cuja reavaliação lança depois do claim não pode travar o lote: sem tratamento, o rollback a
+ *   deixaria como a mais antiga vencida e todo ciclo voltaria a ela. Ela é adiada numa transação nova
+ *   (`Failed`, conta como tentativa, mesmo backoff) e o lote segue. Erro antes do claim (banco fora) encerra o ciclo.
  */
 export class ReprocessPendingReferences {
   constructor(
@@ -70,11 +84,24 @@ export class ReprocessPendingReferences {
   async execute(correlationId: string): Promise<ReprocessPendingReferencesResult> {
     const reprocessed: ReprocessedPendingReference[] = [];
     while (reprocessed.length < this.batchSize) {
-      const item = await this.uow.run(() => this.reprocessNext(correlationId));
+      // Objeto, e não `let`: o TypeScript não acompanha a atribuição feita dentro do callback.
+      const last: { claimed: ClaimedPendingReference | null } = { claimed: null };
+      let item: ReprocessedPendingReference | null;
+      try {
+        item = await this.uow.run(() => {
+          last.claimed = null;
+          return this.reprocessNext(correlationId, last);
+        });
+      } catch (error) {
+        if (last.claimed === null) {
+          throw error;
+        }
+        item = await this.deferFailed(last.claimed, error);
+      }
       if (item === null) {
         break;
       }
-      if (item.outcome !== PendingReferenceOutcome.Retried) {
+      if (DECIDED.has(item.outcome)) {
         this.monitor.pendingReferenceDecided(item.transaction);
       }
       reprocessed.push(item);
@@ -82,13 +109,35 @@ export class ReprocessPendingReferences {
     return { reprocessed };
   }
 
-  /** Tudo é lido dentro do trabalho: o `UnitOfWork` pode reexecutá-lo do zero. */
-  private async reprocessNext(correlationId: string): Promise<ReprocessedPendingReference | null> {
+  /** Conta a tentativa e adia com backoff, numa transação nova (a do claim foi desfeita). */
+  private async deferFailed(claimed: ClaimedPendingReference, error: unknown): Promise<ReprocessedPendingReference> {
+    const attempt = claimed.attempts + 1;
+    await this.uow.run(() =>
+      this.transactions.deferFailedPendingReference(
+        claimed.transaction.id,
+        claimed.attempts,
+        this.retry.afterFailedAttempt(attempt, this.clock.now()),
+      ),
+    );
+    return {
+      transaction: claimed.transaction,
+      outcome: PendingReferenceOutcome.Failed,
+      attempt,
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    };
+  }
+
+  /** Tudo é lido dentro do trabalho: o `UnitOfWork` pode reexecutá-lo do zero. `last` guarda o claim para `deferFailed`. */
+  private async reprocessNext(
+    correlationId: string,
+    last: { claimed: ClaimedPendingReference | null },
+  ): Promise<ReprocessedPendingReference | null> {
     const now = this.clock.now();
     const claimed = await this.transactions.claimDuePendingReference(now);
     if (claimed === null) {
       return null;
     }
+    last.claimed = claimed;
     const { transaction } = claimed;
     const attempt = claimed.attempts + 1;
     const context: WagerEventContext = { correlationId, causationId: undefined, occurredAt: now };

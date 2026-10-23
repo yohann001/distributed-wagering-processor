@@ -12,6 +12,7 @@ import { WagerTransactionKind } from '../../../../../../src/modules/wagering/dom
 import { Money } from '../../../../../../src/shared/domain/money';
 import { createTestApp } from '../../../../../support/create-test-app';
 import { resetDatabase } from '../../../../../support/database';
+import { installStatusChangeFault } from '../../../../../support/fault-injection';
 import { newProviderId, openWalletWithBalance } from '../../../../../support/fixtures';
 import { waitFor } from '../../../../../support/sqs';
 import { assertWalletConsistent } from '../../../../../support/wallet-consistency';
@@ -85,6 +86,55 @@ describe('PendingReferenceWorker (app, Postgres real)', () => {
     const text = await (await fetch(`${baseUrl}/metrics`)).text();
     const processed = /^pending_reference_reprocessed_total\{[^}]*outcome="processed"[^}]*\} (\d+)$/m.exec(text);
     expect(Number(processed?.[1])).toBeGreaterThanOrEqual(1);
+    await assertWalletConsistent(orm, wallet.id);
+  });
+
+  it('counts a failed reevaluation, keeps the transaction pending and resolves it once the failure is gone', async () => {
+    const { wallet } = await openWalletWithBalance(app, { amount: '100.00' });
+    const providerId = newProviderId();
+    const submit = app.get(SubmitWagerTransaction);
+    const base = {
+      providerId,
+      walletId: wallet.id,
+      playerId: wallet.playerId,
+      roundId: `round-${Bun.randomUUIDv7()}`,
+      gameId: 'game-1',
+      money: Money.from({ amount: '30.00', currency: 'BRL' }),
+      correlationId: Bun.randomUUIDv7(),
+    };
+    const betExternalId = `ext-${Bun.randomUUIDv7()}`;
+    const refundExternalId = `ext-${Bun.randomUUIDv7()}`;
+    const pending = (
+      await submit.execute({
+        ...base,
+        idempotencyKey: defaultIdempotencyKey(providerId, refundExternalId),
+        externalTransactionId: refundExternalId,
+        kind: WagerTransactionKind.Refund,
+        referenceExternalTransactionId: betExternalId,
+      })
+    ).transaction;
+    // Antes da BET: sem a referência o worker só reagenda (não muda o status), então o trigger ainda não dispara.
+    const removeFault = await installStatusChangeFault(orm, pending.id);
+
+    try {
+      await submit.execute({
+        ...base,
+        idempotencyKey: defaultIdempotencyKey(providerId, betExternalId),
+        externalTransactionId: betExternalId,
+        kind: WagerTransactionKind.Bet,
+      });
+
+      await waitFor(async () => {
+        const text = await (await fetch(`${baseUrl}/metrics`)).text();
+        const failed = /^pending_reference_reprocessed_total\{[^}]*outcome="failed"[^}]*\} (\d+)$/m.exec(text);
+        return Number(failed?.[1] ?? 0) >= 1 ? true : null;
+      });
+      expect(await statusOf(pending.id)).toBe('PENDING_REFERENCE');
+    } finally {
+      await removeFault();
+    }
+
+    await waitFor(async () => ((await statusOf(pending.id)) === 'PROCESSED' ? true : null));
     await assertWalletConsistent(orm, wallet.id);
   });
 

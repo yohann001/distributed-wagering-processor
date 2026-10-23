@@ -34,4 +34,11 @@ export abstract class WagerTransactionRepository {
 
   /** Grava a contagem e a próxima tentativa de uma `PENDING_REFERENCE`. Exige transação ativa. */
   abstract scheduleReferenceRetry(id: string, attempts: number, nextAttemptAt: Date): Promise<void>;
+
+  /**
+   * Adia uma `PENDING_REFERENCE` cuja reavaliação falhou, contando a tentativa (`fromAttempts + 1`), só se a linha
+   * continua pendente com `fromAttempts`: se outra instância a reavaliou depois do rollback, nada muda. Devolve se
+   * adiou. Exige transação ativa.
+   */
+  abstract deferFailedPendingReference(id: string, fromAttempts: number, nextAttemptAt: Date): Promise<boolean>;
 }

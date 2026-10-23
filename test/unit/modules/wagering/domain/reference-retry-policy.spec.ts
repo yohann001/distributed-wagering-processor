@@ -50,6 +50,27 @@ describe('ReferenceRetryPolicy.afterMissedAttempt', () => {
   });
 });
 
+describe('ReferenceRetryPolicy.afterFailedAttempt', () => {
+  it('schedules the next attempt with the same exponential backoff', () => {
+    const retry = policy(20);
+
+    expect(retry.afterFailedAttempt(1, NOW)).toEqual(new Date(NOW.getTime() + 1_000));
+    expect(retry.afterFailedAttempt(3, NOW)).toEqual(new Date(NOW.getTime() + 4_000));
+    expect(retry.afterFailedAttempt(19, NOW)).toEqual(new Date(NOW.getTime() + 60_000));
+  });
+
+  it('keeps rescheduling at and above the limit: only a reevaluation that decides can exhaust', () => {
+    const retry = policy(3);
+
+    expect(retry.afterFailedAttempt(3, NOW)).toEqual(new Date(NOW.getTime() + 4_000));
+    expect(retry.afterFailedAttempt(30, NOW)).toEqual(new Date(NOW.getTime() + 60_000));
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])('refuses an attempt of %p', (attempt) => {
+    expect(() => policy(3).afterFailedAttempt(attempt, NOW)).toThrow(InvalidBackoffError);
+  });
+});
+
 describe('ReferenceRetryPolicy construction', () => {
   it.each([0, -2, 1.5, Number.NaN])('refuses maxAttempts %p', (maxAttempts) => {
     expect(() => policy(maxAttempts)).toThrow(InvalidBackoffError);

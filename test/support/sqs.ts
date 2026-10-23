@@ -1,7 +1,10 @@
 import {
+  CreateQueueCommand,
   DeleteMessageBatchCommand,
+  DeleteQueueCommand,
   GetQueueAttributesCommand,
   PurgeQueueCommand,
+  QueueDoesNotExist,
   ReceiveMessageCommand,
   SendMessageCommand,
   type Message,
@@ -11,6 +14,7 @@ import {
 
 import { loadEnv } from '../../src/config/env';
 import { buildSqsClient } from '../../src/modules/messaging/infrastructure/sqs/sqs-client';
+import { InjectedFault } from './fault-injection';
 
 /** Cliente SQS apontado para o LocalStack, com a configuração do `.env` (a mesma factory da aplicação). */
 export function createTestSqsClient(): SQSClient {
@@ -45,6 +49,90 @@ export function countingSqsClient(): { client: SQSClient; sentEventIds: string[]
     { step: 'initialize', name: 'countOutboxSends' },
   );
   return { client, sentEventIds };
+}
+
+/**
+ * Cliente SQS real em que a próxima chamada do comando armado falha uma vez com `InjectedFault`, antes de sair
+ * para o LocalStack. Só acrescenta um ponto de falha: toda outra chamada, e as seguintes do mesmo comando,
+ * vão para o LocalStack.
+ */
+export function faultySqsClient(): { client: SQSClient; failNext(commandName: string): void } {
+  const client = createTestSqsClient();
+  let armed: string | undefined;
+  client.middlewareStack.add(
+    (next, context) => async (args) => {
+      if (armed !== undefined && context.commandName === armed) {
+        armed = undefined;
+        throw new InjectedFault(context.commandName);
+      }
+      return next(args);
+    },
+    { step: 'initialize', name: 'failNextCommand' },
+  );
+  return {
+    client,
+    failNext(commandName) {
+      armed = commandName;
+    },
+  };
+}
+
+export interface TemporaryQueues {
+  queueUrl: string;
+  deadLetterQueueUrl: string;
+  /** Apaga as duas filas; uma que já não existe é ignorada. */
+  remove(): Promise<void>;
+}
+
+/**
+ * Par de filas FIFO (principal e DLQ) só deste teste. A fila compartilhada do `.env` tem visibilidade longa e é usada
+ * por outras suítes; aqui a visibilidade é curta (`visibilityTimeoutSeconds`), para a reentrega por expiração caber
+ * num teste, e nenhuma mensagem de outra suíte entra. Sem `RedrivePolicy`: a DLQ sob teste é a explícita do consumer.
+ * As URLs vêm da URL do `.env` com o nome trocado, nunca da resposta do `CreateQueue` (formato diferente no LocalStack).
+ */
+export async function createTemporaryQueues(
+  client: SQSClient,
+  opts: { visibilityTimeoutSeconds: number },
+): Promise<TemporaryQueues> {
+  const base = testQueueUrls().wager;
+  const suffix = Bun.randomUUIDv7();
+  const queueName = `it-${suffix}.fifo`;
+  const deadLetterQueueName = `it-${suffix}-dlq.fifo`;
+  const queueUrl = base.replace(/[^/]+$/, queueName);
+  const deadLetterQueueUrl = base.replace(/[^/]+$/, deadLetterQueueName);
+
+  await client.send(
+    new CreateQueueCommand({
+      QueueName: queueName,
+      Attributes: {
+        FifoQueue: 'true',
+        ContentBasedDeduplication: 'false',
+        VisibilityTimeout: String(opts.visibilityTimeoutSeconds),
+      },
+    }),
+  );
+  await client.send(
+    new CreateQueueCommand({
+      QueueName: deadLetterQueueName,
+      Attributes: { FifoQueue: 'true', ContentBasedDeduplication: 'false' },
+    }),
+  );
+
+  return {
+    queueUrl,
+    deadLetterQueueUrl,
+    async remove() {
+      for (const url of [queueUrl, deadLetterQueueUrl]) {
+        try {
+          await client.send(new DeleteQueueCommand({ QueueUrl: url }));
+        } catch (error) {
+          if (!(error instanceof QueueDoesNotExist)) {
+            throw error;
+          }
+        }
+      }
+    },
+  };
 }
 
 /**

@@ -226,7 +226,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §13 (Integração: atomicidade), §6.5, §11
 - **Depende de:** T22, T23
 
-### [ ] T27 — Integração: inbox, redelivery, retry e DLQ
+### [x] T27 — Integração: inbox, redelivery, retry e DLQ
 - **Descrição:** Cenários reais de SQS: redelivery após o timeout de visibilidade, mensagem duplicada com o mesmo `messageId`, falha transitória com retry e mensagem permanente indo para a DLQ.
 - **Critério de aceite:** efeito único por mensagem; mensagem na DLQ após o limite configurado; métricas de retry e DLQ incrementadas.
 - **Seção:** §13 (Integração: inbox e redelivery; retry e DLQ), §10

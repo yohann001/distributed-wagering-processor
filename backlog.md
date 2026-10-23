@@ -274,7 +274,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 ## Fase 8 — Diferenciais opcionais
 
-### [ ] T32 — Teste de carga (`bun run test:load`)
+### [x] T32 — Teste de carga (`bun run test:load`)
 - **Descrição:** Script de carga contra as 3 réplicas atrás do nginx, com mistura de operações e wallets quentes/frias. Registrar ambiente, metodologia, throughput, p50/p95/p99, taxa de erro, conflitos de concorrência e outbox lag.
 - **Critério de aceite:** `bun run test:load` executa de ponta a ponta e gera relatório. Resultados e análise honesta (incluindo limitações) no README/ARCHITECTURE. Invariantes verificadas ao final.
 - **Seção:** §14 (Diferenciais opcionais)

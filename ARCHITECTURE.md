@@ -578,6 +578,217 @@ Testes: `test/concurrency/crash-restart-concurrency.spec.ts`, com processos reai
 - **Invariante de saldo (§13).** Todo teste termina com `assertWalletConsistent` em cada wallet que tocou.
 - **Fora do escopo.** Réplicas do compose atrás do nginx e medição de carga e latência (T32).
 
+## Teste de carga (§14)
+
+Código: `test/load/` (`run-load-test.ts` é o ponto de entrada; `load-config.ts`, `workload.ts`, `replica-metrics.ts`, `stats.ts`, `invariants.ts`, `report.ts`). Teste da matemática do relatório: `test/unit/load/stats.spec.ts`. É um script, não um spec: fica fora de `bun test` e de `test:concurrency`. Nenhum código de `src/` mudou. O `README.md` ainda não existe (T34); ele deve apontar para esta seção.
+
+### Como rodar
+
+- **Comando.** `bun run test:load` (`bun test/load/run-load-test.ts`), a partir de um clone com só `bun install` e `.env`. Sobe Postgres e LocalStack (`docker compose up -d --wait postgres localstack`), roda `bun run migration:up`, sobe as 3 réplicas e o nginx (`docker compose --profile app up -d --build --wait`), espera `/health/ready` em `http://localhost:8080`, abre as wallets, aplica a carga, espera a drenagem, verifica as invariantes e grava o relatório. Sai com 0 se todas as invariantes passam e a drenagem conclui no prazo, e com 1 caso contrário. Latência e taxa de erro nunca decidem o código de saída (§14: não há meta de RPS).
+- **Teardown.** No fim para só `app` e `nginx` (`docker compose --profile app stop app nginx`; nunca `down`, que também derrubaria Postgres e LocalStack) e espera 21 s antes de devolver o controle: o LocalStack mantém o `ReceiveMessage` das réplicas paradas vivo até 20 s (o teto do long poll do SQS) e entrega a próxima mensagem da fila compartilhada a essa conexão morta. Sem a espera, o `test:integration` rodado logo depois falhou 3 casos do `metrics-coverage.spec.ts` (a mensagem ficava em voo pela visibilidade de 30 s da fila); o mesmo spec rodado minutos depois passou. Com a espera, a suíte de integração ficou verde logo em seguida (306 testes).
+- **Variáveis.** `LOAD_SKIP_COMPOSE=true` não chama o docker (a pilha é do usuário) mas ainda roda `migration:up`. `LOAD_KEEP_APP=true` deixa `app` e `nginx` no ar. Relatórios em `reports/load/load-<runId>.md` e `.json` (o JSON inclui a série de backlog da outbox), ignorados pelo git.
+
+| Variável | Padrão | O que controla |
+|---|---|---|
+| `LOAD_BASE_URL` | `http://localhost:8080` | Entrada HTTP (nginx) |
+| `LOAD_DURATION_SECONDS` | `60` | Janela medida (5 a 3600) |
+| `LOAD_WARMUP_SECONDS` | `5` | Aquecimento, fora de throughput e latência e dentro das invariantes |
+| `LOAD_CONCURRENCY` | `24` | Usuários virtuais em laço fechado, sem tempo de espera |
+| `LOAD_HOT_WALLETS` / `LOAD_HOT_TRAFFIC_RATIO` | `4` / `0.5` | Wallets quentes e fatia do tráfego que vai para elas |
+| `LOAD_HOT_INITIAL_BALANCE` / `LOAD_COLD_INITIAL_BALANCE` | `300.00` / `1000.00` | Saldo inicial (texto decimal, nunca `number`) |
+| `LOAD_COLD_WALLETS` | `200` | Wallets frias |
+| `LOAD_SQS_RATIO` / `LOAD_REPLAY_RATIO` | `0.2` / `0.1` | Fatia das rodadas por SQS e das que reenviam a BET |
+| `LOAD_SEED` | `42` | Semente do mix (uma por usuário virtual: semente + índice) |
+| `LOAD_EXPECTED_REPLICAS` | `3` | Réplicas que precisam aparecer atrás do nginx, senão o script falha |
+| `LOAD_SKIP_COMPOSE` / `LOAD_KEEP_APP` | `false` / `false` | Ver acima |
+| `LOAD_DRAIN_TIMEOUT_SECONDS` | `180` | Teto da espera de drenagem |
+| `LOAD_REPORT_DIR` | `reports/load` | Destino dos relatórios |
+
+### Metodologia
+
+- **Laço fechado.** `LOAD_CONCURRENCY` usuários virtuais repetem rodadas sem pausa até o fim da janela. Uma rodada é uma `BET` e, em 95% dos casos, um desfecho que a referencia (`WIN` 35%, `LOSS` 35%, `REFUND` 15%, `ROLLBACK` 10%). Por HTTP o desfecho só sai se a `BET` voltou `PROCESSED`; por SQS a `BET` e o desfecho vão no mesmo `MessageGroupId` (a wallet), em ordem. O canal de cada rodada é sorteado (`LOAD_SQS_RATIO` SQS, o resto HTTP). Com `LOAD_REPLAY_RATIO`, a `BET` é reenviada: HTTP com a mesma key e o mesmo corpo, SQS com o mesmo `messageId` e um novo id de deduplicação do FIFO (que o broker não colapsa; a inbox é quem reconhece).
+- **Wallets quentes e frias.** As wallets são abertas pelo nginx no início, com `playerId` próprio da execução; as quentes são poucas, têm saldo baixo (`INSUFFICIENT_FUNDS` acontece) e recebem `LOAD_HOT_TRAFFIC_RATIO` do tráfego. Providers próprios (`load-<runId>-p1..p3`) isolam a execução: o banco e a fila não são zerados e as invariantes olham só as wallets e transações dela. Os valores vêm de listas fixas de texto decimal: o gerador não faz conta de dinheiro.
+- **O que é medido onde.** Latência HTTP no cliente (`performance.now()`), incluindo o nginx e a espera pelo lock; erro de rede (sem resposta) fica fora da latência e entra na taxa de erro. Latência SQS ponta a ponta é `coalesce(processed_at, created_at)` da transação menos o instante do envio no cliente. Latência de processamento no servidor é estimada dos buckets de `wager_transaction_processing_seconds` (interpolação linear dentro do bucket). O lag da outbox é exato, calculado no banco (`published_at - occurred_at`), e o backlog é amostrado a cada 1 s (`pending` e idade do mais antigo, só dos agregados da execução; mais a profundidade da fila de transações, visível e em voo, por `GetQueueAttributes`, cujos números o SQS dá como aproximados e que vale -1 no instante em que a leitura falha). A latência SQS também é resumida por temperatura da wallet e por janela de 10 s do instante de envio, contada do início da carga. Deadlocks vêm do delta de `pg_stat_database.deadlocks`.
+- **Contadores Prometheus.** Delta entre duas leituras de `/metrics` de cada réplica (o nginx faz round-robin, então o script lê até ver as 3 `instance_id`): uma depois de abrir as wallets, outra depois da drenagem. Um contador que diminui é tratado como reinício (o relatório lista). As métricas são globais por réplica: aquecimento, tráfego de outra origem e a janela inteira entram nos deltas, por isso as contagens do servidor passam das requisições medidas.
+- **Janela.** A taxa é calculada sobre `endedAt - measureStartedAt` (da saída do aquecimento até a última rodada terminar), com o mesmo critério no numerador: a rodada em andamento no fim da janela termina e conta.
+- **Drenagem e invariantes.** Depois da carga o script espera até `LOAD_DRAIN_TIMEOUT_SECONDS` que toda mensagem SQS enviada tenha virado transação, que nenhuma `PENDING_REFERENCE` sobre e que a outbox da execução esteja publicada, e verifica no banco real: (a) mensagens SQS viraram transações e nenhuma ficou `PENDING_REFERENCE`; (b) nenhum evento da execução sem publicar; (c) nenhum par `(provider, externalTransactionId)` duplicado e toda submissão HTTP respondida 200/202/422 com exatamente 1 linha; (d) 1 lançamento por transação `PROCESSED` que não é `LOSS`, e nenhum lançamento em transação que não seja; (e) nenhum saldo negativo; (f) no máximo uma reversão `PROCESSED` por transação referenciada; (g) `assertWalletConsistent` em toda wallet da execução; (h) `POST /wallets/:id/reconciliation` pelo nginx com `consistent: true` em todas; (i) todo replay HTTP devolveu o mesmo `transactionId`, o mesmo status HTTP e `idempotentReplay: true`.
+
+### Ambiente da execução registrada
+
+Execução `20261023T123400-d8fc47` (arquivo `reports/load/load-20261023T123400-d8fc47.md`), com os padrões da tabela acima.
+
+- Data: 2026-10-23T12:34:10.691Z
+- Sistema: Linux 7.0.0-38-generic (x64)
+- CPU: AMD Ryzen 7 5700U with Radeon Graphics x 16
+- Memória: 14.5 GiB
+- Bun (gerador de carga): 1.4.2
+- Docker (servidor): 29.9.1
+- PostgreSQL: PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+- Réplicas atrás do nginx (3): 317043b500bc, 55e21187498e, f5d2cbce7dc6
+
+### Resultados
+
+Copiados do relatório gerado. Throughput:
+
+| Métrica | Valor |
+| --- | --- |
+| Janela medida (s) | 60.4 |
+| Requisições HTTP na janela | 15004 |
+| Requisições HTTP por segundo | 248.5 |
+| Rodadas na janela | 10544 |
+| Rodadas por segundo | 174.6 |
+| Rodadas totais (com aquecimento) | 11134 |
+| Mensagens SQS enviadas | 4382 |
+| Reenvios SQS (replay) | 237 |
+| Falhas de envio ao SQS | 0 |
+| Drenagem das mensagens SQS depois da carga (s) | 4.8 |
+| Drenagem da outbox depois da carga (s) | 5.3 |
+| Fila SQS: maior profundidade visível amostrada | 665 |
+| Fila SQS: maior profundidade em voo amostrada | 29 |
+| Fila SQS: visível / em voo ao fim da carga | 597 / 16 |
+
+Latência HTTP no cliente, geral, por tipo e por temperatura da wallet:
+
+|  | Amostras | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) | média (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Geral | 15004 | 49.6 | 439.9 | 608.3 | 826.1 | 93.9 |
+| BET | 8435 | 49.2 | 416.6 | 591.5 | 826.1 | 90.9 |
+| BET_REPLAY | 886 | 19.1 | 61.5 | 79.2 | 107.5 | 24.6 |
+| WIN | 2074 | 59.8 | 469.5 | 643.8 | 728.7 | 112.2 |
+| LOSS | 2085 | 48.8 | 483.6 | 637.0 | 760.5 | 102.2 |
+| REFUND | 929 | 59.7 | 511.2 | 634.5 | 711.3 | 116.3 |
+| ROLLBACK | 595 | 60.7 | 476.1 | 608.5 | 685.3 | 112.0 |
+| wallet hot | 6122 | 83.0 | 553.0 | 666.0 | 826.1 | 162.2 |
+| wallet cold | 8882 | 41.3 | 98.2 | 123.7 | 200.8 | 46.9 |
+
+Latência SQS ponta a ponta (geral, por temperatura da wallet e por janela de envio de 10 s):
+
+|  | Amostras | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) | média (ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| SQS (envio até a decisão) | 4382 | 1123.0 | 18369.0 | 26737.0 | 29819.0 | 5132.2 |
+| wallet hot | 2214 | 8312.0 | 23760.0 | 28289.0 | 29819.0 | 9570.6 |
+| wallet cold | 2168 | 561.0 | 1078.0 | 1395.0 | 2196.0 | 599.6 |
+
+Por janela de envio (10 s, contados do início da carga, aquecimento incluído):
+
+| Janela de envio | Amostras | p50 (ms) | p95 (ms) | max (ms) |
+| --- | --- | --- | --- | --- |
+| 0-10 s | 552 | 830.0 | 7372.0 | 8771.0 |
+| 10-20 s | 576 | 1057.0 | 13338.0 | 17581.0 |
+| 20-30 s | 661 | 1332.0 | 18285.0 | 19380.0 |
+| 30-40 s | 739 | 2044.0 | 27554.0 | 29819.0 |
+| 40-50 s | 751 | 7063.0 | 23521.0 | 25798.0 |
+| 50-60 s | 800 | 1117.0 | 14231.0 | 17916.0 |
+| 60-65 s | 303 | 829.0 | 7177.0 | 8652.0 |
+
+Latência de processamento no servidor (estimativa por buckets, todos os desfechos juntos):
+
+| Canal | Submissões | p50 (ms) | p95 (ms) | p99 (ms) |
+| --- | --- | --- | --- | --- |
+| http | 15910 | 46.8 | 427.6 | 837.7 |
+| sqs | 4619 | 54.5 | 215.0 | 455.2 |
+
+Desfechos persistidos (HTTP e SQS) e taxa de erro HTTP:
+
+| Tipo | Status | failureCode | Transações |
+| --- | --- | --- | --- |
+| BET | PROCESSED | - | 7931 |
+| BET | REJECTED | INSUFFICIENT_FUNDS | 3203 |
+| LOSS | PROCESSED | - | 2745 |
+| LOSS | REJECTED | REFERENCE_NOT_PROCESSED | 256 |
+| REFUND | PROCESSED | - | 1240 |
+| REFUND | REJECTED | REFERENCE_NOT_PROCESSED | 111 |
+| ROLLBACK | PROCESSED | - | 793 |
+| ROLLBACK | REJECTED | REFERENCE_NOT_PROCESSED | 88 |
+| WIN | PROCESSED | - | 2767 |
+| WIN | REJECTED | REFERENCE_NOT_PROCESSED | 231 |
+
+| Classe | Requisições |
+| --- | --- |
+| Aceitas (200/202) | 12262 |
+| 422 (desfecho de negócio, não é erro) | 2742 |
+| 4xx exceto 422 | 0 |
+| 5xx | 0 |
+|   dos quais 503 | 0 |
+| Erro de rede (sem resposta) | 0 |
+| Total | 15004 |
+
+Conflitos de concorrência:
+
+| Motivo | Desfecho | Ocorrências |
+| --- | --- | --- |
+| deadlock | retried | 0 |
+| deadlock | exhausted | 0 |
+| serialization_failure | retried | 0 |
+| serialization_failure | exhausted | 0 |
+| lock_timeout | retried | 0 |
+| lock_timeout | exhausted | 0 |
+| version_conflict | retried | 0 |
+| version_conflict | exhausted | 0 |
+
+- Deadlocks do Postgres na execução (`pg_stat_database.deadlocks`, delta): 0
+- Respostas 503 ao cliente: 0
+- Duplicatas detectadas: http/idempotency_key=927, sqs/inbox=237
+- Desfechos do consumer SQS: processed=4382, replayed=237
+- Reavaliações de PENDING_REFERENCE: -
+- Contadores zerados por reinício de réplica: nenhum
+
+Outbox:
+
+| Métrica | Valor |
+| --- | --- |
+| Eventos publicados do experimento | 32504 |
+| Lag p50 (s) | 0.521 |
+| Lag p95 (s) | 1.034 |
+| Lag p99 (s) | 1.335 |
+| Lag máximo (s) | 1.550 |
+| Maior fila pendente amostrada (eventos) | 509 |
+| Maior idade do evento pendente mais antigo (s) | 1.4 |
+| Drenagem depois da carga (s) | 5.3 |
+| Retries de publicação | 0 |
+| Eventos publicados na janela (soma das réplicas) | 32504 |
+
+Distribuição por réplica:
+
+| Réplica | Decisões | Duplicatas | Eventos publicados | Conflitos retried | Conflitos exhausted |
+| --- | --- | --- | --- | --- | --- |
+| 317043b500bc | 6653 | 402 | 10224 | 0 | 0 |
+| 55e21187498e | 6260 | 384 | 11065 | 0 | 0 |
+| f5d2cbce7dc6 | 6452 | 378 | 11215 | 0 | 0 |
+
+- Decisões novas na janela (`wager_transactions_total`): 19365
+- Por status: PROCESSED=15476, REJECTED=3889
+- Por origem: http=14983, sqs=4382
+
+Invariantes: 9/9 PASS e drenagem concluída (mensagens SQS sem transação: 0, `PENDING_REFERENCE` restantes: 0, outbox pendente: 0).
+
+### Análise
+
+Todos os números desta seção vêm da execução `20261023T123400-d8fc47`, salvo onde o texto cita outra execução pelo id.
+
+- **O throughput é consequência da latência, não uma capacidade medida.** O gerador é de laço fechado: 24 usuários virtuais com latência média de 93,9 ms dariam cerca de 256 req/s e o medido foi 248,5 req/s (o resto do tempo do usuário vai para os envios ao SQS). Subir `LOAD_CONCURRENCY` mudaria os dois números; o relatório não encontra um ponto de saturação e não afirma que a pilha não passe de 248,5 req/s.
+- **Wallet quente espera mais.** Para as wallets quentes, p50/p95/p99 foram 83,0/553,0/666,0 ms; para as frias, 41,3/98,2/123,7 ms (máximo de 200,8 ms contra 826,1 ms). 41% das requisições HTTP medidas (6122 de 15004) foram para 4 wallets. É o esperado do lock por linha da wallet (§8): as requisições da mesma wallet esperam a vez no `SELECT ... FOR UPDATE`. É inferência: nenhuma métrica mede a espera pelo lock (a T25 deixou o histograma de espera fora do escopo); o relatório só mostra o efeito na latência.
+- **Contenção resolvida esperando, não falhando.** Zero conflitos em `lock_conflicts_total` (nenhum `retried`, nenhum `exhausted`, em nenhum motivo), zero deadlocks no Postgres, zero 503. A pior latência no cliente (826,1 ms) ficou abaixo do `DB_LOCK_TIMEOUT_MS` padrão (2000 ms), então o `lock_timeout` e o retry do `UnitOfWork` não foram exercitados. O que o relatório prova é que esta carga não chega a eles; para vê-los, é preciso mais usuários virtuais ou menos wallets quentes (`LOAD_CONCURRENCY`, `LOAD_HOT_WALLETS=1`). A correção sob conflito está nos testes de concorrência (T29 a T31), não aqui.
+- **Taxa de erro 0,00%, e 422 não é erro.** 2742 respostas 422 (18,3% das requisições medidas) são desfechos de negócio: 3203 `BET` foram `REJECTED` com `INSUFFICIENT_FUNDS` (HTTP e SQS) e 686 desfechos de `BET` rejeitada vieram `REJECTED` com `REFERENCE_NOT_PROCESSED` (só por SQS, que envia o desfecho sem esperar a decisão da `BET`). Não houve 4xx fora o 422, 5xx nem erro de rede.
+- **Idempotência sob carga.** 927 reenvios HTTP voltaram com a decisão original (invariante (i)) e as 237 reentregas SQS foram reconhecidas pela inbox (`sqs/inbox=237`, consumer `replayed=237`), sem débito nem crédito duplicado: 0 transações duplicadas e todas as wallets consistentes e reconciliadas.
+- **Outbox acompanhou a carga.** Lag de p50 0,521 s, p95 1,034 s e máximo de 1,550 s; o backlog chegou a 509 eventos pendentes, com o mais antigo de 1,4 s, e a outbox terminou de drenar 5,3 s depois do fim da carga, sem nenhum retry de publicação. O p50 perto de metade do intervalo do publisher (`OUTBOX_PUBLISHER_POLL_INTERVAL_MS` padrão de 1000 ms) é o que se espera de um evento que chega com o publisher dormindo; o p95 acima de 1 s são eventos que esperaram atrás do backlog (lote de 10 por claim). Essa leitura é compatível com os números, mas o experimento não isolou a causa.
+- **Réplicas equilibradas.** Decisões de 6653, 6260 e 6452 entre as 3 réplicas (6% entre a maior e a menor); o round-robin do nginx e a idempotência em todas as réplicas funcionaram juntos.
+- **Cauda da latência SQS: wallet quente, backlog crescente e o `processBatch` do consumer.** A latência ponta a ponta teve p50 de 1,123 s e p95 de 18,369 s (máximo de 29,819 s), mas separada por temperatura da wallet são duas populações: quente com p50 de 8,312 s e p95 de 23,760 s, fria com p50 de 0,561 s, p95 de 1,078 s e máximo de 2,196 s. Por janela de envio, o p95 sobe de 7,4 s (0 a 10 s) para 27,6 s (30 a 40 s) e cai para 14,2 s e 7,2 s nas duas últimas janelas. A fila `wager-transactions.fifo` visível cresceu de 2 para um máximo amostrado de 665 ao longo da carga (série no `backlogTimeline` do JSON), terminou a carga com 597 visíveis e 16 em voo e esvaziou 4,8 s depois. Os três sinais (quente muito acima da fria, latência e fila crescendo durante a carga, colapso depois dela) concordam com o mecanismo do consumer: `processBatch` (`src/modules/messaging/infrastructure/sqs/sqs-wager-transaction-consumer.ts:141`) roda os grupos de um lote em paralelo, mas as mensagens de um grupo (aqui, a wallet) em sequência, e só recebe o próximo lote depois que todos os grupos terminaram; as 4 wallets quentes são 4 grupos cujas mensagens esperam o lock da wallet atrás do tráfego HTTP. Em ordem de grandeza, os consumidores deram vazão a cerca de 58 mensagens/s durante a carga (4382 enviadas menos cerca de 613 pendentes ao fim, em cerca de 65 s) e esvaziaram esses 613 em 4,8 s (cerca de 128 mensagens/s) quando o HTTP parou. Ressalvas: o experimento não mede a espera pelo lock de cada mensagem nem o tamanho de cada lote, então a atribuição ao lock mais `processBatch` é inferência dos três sinais e não medição direta; e o bloqueio de mensagens frias por um lote lento (head-of-line) é modesto nos dados (frias em p95 de 1,078 s e máximo de 2,196 s): o efeito dominante é a fila das próprias wallets quentes. A latência de processamento no servidor do canal SQS (p95 de 215,0 ms) cobre só o `execute()`, sem a espera na fila.
+- **Variação entre execuções.** Duas execuções anteriores, com os mesmos parâmetros, deram: `20261023T122201-a88905`, 251,0 req/s, HTTP p50/p95/p99 de 55,2/350,7/559,2 ms e SQS ponta a ponta p50/p95 de 1,562/20,313 s; `20261023T122531-81bab3`, 239,1 req/s, 50,0/450,1/620,1 ms e SQS 1,565/21,278 s (as duas sem a separação quente/fria nem a série da fila SQS). Esta execução deu 248,5 req/s, 49,6/439,9/608,3 ms e SQS 1,123/18,369 s. O throughput variou entre 239,1 e 251,0 req/s (cerca de 5%), o p95 HTTP entre 350,7 e 450,1 ms (cerca de 28%) e o p95 SQS entre 18,4 e 21,3 s. Uma única execução não sustenta comparações finas.
+- **Estimativa por buckets tem resolução grossa.** O p99 de 837,7 ms do servidor no canal HTTP passa do máximo de 826,1 ms visto no cliente: é a interpolação dentro do bucket de 0,5 a 1 s, mais as submissões do aquecimento e de qualquer outro tráfego nos contadores. Serve para a ordem de grandeza, não para o último dígito.
+
+### Limitações
+
+- **Uma máquina só.** Gerador de carga, 3 réplicas, nginx, Postgres e LocalStack dividem a mesma CPU e a mesma memória (16 threads, 14,5 GiB). O gerador compete com o que mede, e os números não são comparáveis entre máquinas nem representam produção. Não há meta de RPS.
+- **LocalStack não é desempenho de SQS.** Latência de envio, entrega, ordem por grupo e visibilidade do LocalStack 4.14.0 não dizem nada sobre o SQS real; a latência ponta a ponta e o tempo de drenagem valem só para este ambiente.
+- **Laço fechado.** Cada usuário só envia a próxima rodada depois da resposta, então o sistema nunca recebe mais do que sustenta e a latência cai junto com o throughput quando ele degrada (omissão coordenada): mede a latência na vazão que o sistema aguentou, não a latência sob uma taxa de chegada fixa. Não há gerador de taxa constante.
+- **Bloqueio por lote no consumer SQS (não corrigido aqui).** O `processBatch` do consumer espera o grupo mais lento do lote antes de receber o próximo, e as mensagens de um mesmo `MessageGroupId` (uma wallet) são sequenciais; com uma wallet quente disputando o lock com o HTTP, a fila SQS dessa wallet cresce durante a carga (ver a análise acima). É propriedade do consumer, não do script de carga; nenhum código de `src/` mudou nesta task, e o ajuste fica como candidato a trabalho futuro.
+- **nginx sem `keepalive` para o upstream.** `docker/nginx/nginx.conf` abre uma conexão TCP nova por requisição proxied (`upstream` sem `keepalive`), o que soma ao piso de latência das wallets frias. Não foi alterado (a task não mexe em compose nem nginx).
+- **Relógios.** A latência SQS ponta a ponta subtrai um timestamp do banco (gravado pela réplica, num container) de um do cliente (host); é o mesmo kernel, mas não há sincronização garantida. Para uma transação `REJECTED` o fim é `created_at` e não `processed_at`.
+- **Percentis do servidor são estimativas** por buckets de 5 ms a 10 s; as contagens do servidor incluem o aquecimento e qualquer outro tráfego nas réplicas durante a execução.
+- **Configuração de compose.** As réplicas rodam com `LOG_LEVEL=info` escrevendo em stdout e `DATABASE_POOL_MAX=10`; os padrões do compose entram nos números. O banco é compartilhado com o desenvolvimento: dados de execuções e testes anteriores ficam lá, o que aumenta as tabelas e as varreduras que as consultas de verificação fazem (`wager_transactions` não tem índice por `wallet_id`).
+- **Fora do que o experimento cobre.** `PENDING_REFERENCE` e DLQ não aparecem (0 reavaliações pelo worker nesta execução: o FIFO por wallet mantém a `BET` antes do desfecho e o HTTP só envia o desfecho depois da `BET`); estão cobertos por T24, T27 e T31. Reinício de réplica durante a carga também não: é a T31.
+
 ## Suporte de testes (§13)
 
 Helpers em `test/support/` (`database.ts`, `fixtures.ts`, `wallet-consistency.ts`, `sqs.ts`, `schema-objects.ts`, além de `create-test-app.ts` e `orm-context.ts`) e specs em `test/integration/support/test-support.spec.ts` e `test/integration/infrastructure/database/` (`constraints.spec.ts`, `migrations.spec.ts`).

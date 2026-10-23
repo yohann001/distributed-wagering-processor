@@ -41,3 +41,16 @@ export async function walletLockWaiters(orm: MikroORM): Promise<number> {
   );
   return rows[0]?.total ?? 0;
 }
+
+/**
+ * Backends esperando lock de linha em `wallets`, por `application_name`: com `PGAPPNAME` por processo, quantos de
+ * cada instância estão presos no lock. Instância sem backend esperando não aparece no mapa.
+ */
+export async function walletLockWaitersByApplication(orm: MikroORM): Promise<Map<string, number>> {
+  const rows = await orm.em.fork().execute<{ application_name: string; total: number }[]>(
+    `select application_name, count(*)::int as total from pg_stat_activity
+      where datname = current_database() and wait_event_type = 'Lock' and query ilike '%wallets%'
+      group by application_name`,
+  );
+  return new Map(rows.map((row) => [row.application_name, row.total]));
+}

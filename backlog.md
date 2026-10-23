@@ -250,7 +250,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §13 (Concorrência 1, 2, 3), §8 (Cenário obrigatório)
 - **Depende de:** T19, T22
 
-### [ ] T30 — Concorrência: ≥ 3 processos/instâncias simultâneos
+### [x] T30 — Concorrência: ≥ 3 processos/instâncias simultâneos
 - **Descrição:** Subir 3 ou mais processos reais da aplicação (subprocessos Bun ou réplicas do compose) disputando as mesmas wallets via HTTP e SQS.
 - **Critério de aceite:** invariantes preservadas (sem saldo negativo, sem débito/crédito duplicado), contagem exata de lançamentos esperados e `assertWalletConsistent` em todas as wallets.
 - **Seção:** §13 (Concorrência 4), §5.8, §8

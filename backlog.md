@@ -220,7 +220,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 
 > Todos os testes desta fase usam PostgreSQL e LocalStack **reais** e terminam com `assertWalletConsistent` (`wallet.balance == saldo reconstruído pelo ledger`).
 
-### [ ] T26 — Integração: atomicidade wallet/ledger/inbox/outbox
+### [x] T26 — Integração: atomicidade wallet/ledger/inbox/outbox
 - **Descrição:** Injetar falha em cada etapa da transação (após o ledger, antes da outbox, no commit) e comprovar que nada é persistido parcialmente.
 - **Critério de aceite:** para cada ponto de falha, nenhuma linha nova em `wager_transactions`, `wallet_ledger_entries`, `inbox_messages` e `outbox_messages`, e saldo inalterado.
 - **Seção:** §13 (Integração: atomicidade), §6.5, §11

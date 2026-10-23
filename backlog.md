@@ -256,7 +256,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §13 (Concorrência 4), §5.8, §8
 - **Depende de:** T29
 
-### [ ] T31 — Concorrência: crash, outbox dupla, referência fora de ordem e restart
+### [x] T31 — Concorrência: crash, outbox dupla, referência fora de ordem e restart
 - **Descrição:**
   - (5) Worker morto (`SIGKILL`) depois do commit e antes do ack.
   - (6) Dois publishers sobre a mesma outbox.

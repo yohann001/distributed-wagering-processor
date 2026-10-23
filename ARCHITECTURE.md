@@ -715,7 +715,7 @@ Testes: `test/concurrency/crash-restart-concurrency.spec.ts`, com processos reai
 
 ## Teste de carga (§14)
 
-Código: `test/load/` (`run-load-test.ts` é o ponto de entrada; `load-config.ts`, `workload.ts`, `replica-metrics.ts`, `stats.ts`, `invariants.ts`, `report.ts`). Teste da matemática do relatório: `test/unit/load/stats.spec.ts`. É um script, não um spec: fica fora de `bun test` e de `test:concurrency`. Nenhum código de `src/` mudou. O `README.md` (T34) deve apontar para esta seção.
+Código: `test/load/` (`run-load-test.ts` é o ponto de entrada; `load-config.ts`, `workload.ts`, `replica-metrics.ts`, `stats.ts`, `invariants.ts`, `report.ts`). Teste da matemática do relatório: `test/unit/load/stats.spec.ts`. É um script, não um spec: fica fora de `bun test` e de `test:concurrency`. Nenhum código de `src/` mudou. O `README.md` aponta para esta seção.
 
 ### Como rodar
 

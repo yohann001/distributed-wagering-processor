@@ -302,7 +302,7 @@ Definição de pronto (vale para toda task): `bun run typecheck` limpo, testes d
 - **Seção:** §2, §4, §7, §7.1, §7.2, §8, §9, §14 (Documentação)
 - **Depende de:** T01–T31 (T32 se feita)
 
-### [ ] T34 — `README.md` final
+### [x] T34 — `README.md` final
 - **Descrição:** Visão geral, pré-requisitos, setup (`bun install`, `.env`, `infra:up`, migrations), como rodar a app (local e 3 réplicas + nginx), todos os comandos de teste, exemplos de requisições (curl) e de mensagem SQS, endpoints, health e métricas, e link para o `ARCHITECTURE.md`.
 - **Critério de aceite:** um avaliador consegue, partindo de um clone limpo e seguindo só o README, subir tudo e rodar todos os testes com sucesso.
 - **Seção:** §14 (Documentação)
